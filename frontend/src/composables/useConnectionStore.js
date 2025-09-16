@@ -263,11 +263,13 @@ export const useConnectionStore = defineStore('connection', () => {
   // 处理主题消息
   const handleTopicMessage = (topic, message) => {
     const handlers = messageHandlers.value.get(topic)
-    
+
     console.log(`[ConnectionStore] 🎯 处理主题消息: ${topic}`)
     console.log(`[ConnectionStore] - 消息内容:`, message)
     console.log(`[ConnectionStore] - 注册的处理器数量: ${handlers?.size || 0}`)
-    
+    console.log(`[ConnectionStore] - 当前订阅的主题:`, Array.from(subscribedTopics.value))
+    console.log(`[ConnectionStore] - 主题在订阅列表中: ${subscribedTopics.value.has(topic)}`)
+
     if (handlers && handlers.size > 0) {
       let handlerIndex = 0
       handlers.forEach(handler => {
@@ -281,6 +283,10 @@ export const useConnectionStore = defineStore('connection', () => {
       })
     } else {
       console.warn(`[ConnectionStore] ⚠️ 主题 ${topic} 没有注册处理器`)
+      console.warn(`[ConnectionStore] - 所有已注册的处理器:`)
+      messageHandlers.value.forEach((handlerSet, handlerTopic) => {
+        console.warn(`  - ${handlerTopic}: ${handlerSet.size} handlers`)
+      })
     }
   }
   
@@ -294,17 +300,20 @@ export const useConnectionStore = defineStore('connection', () => {
   
   // 订阅主题
   const subscribeTopic = (topic, messageType, handler) => {
+    console.log(`[ConnectionStore] 🔔 subscribeTopic called: topic=${topic}, type=${messageType}, connected=${isConnected.value}`)
+
     if (!isConnected.value) {
-      console.warn('Not connected to ROS')
+      console.warn('[ConnectionStore] ❌ Not connected to ROS')
       return false
     }
-    
+
     // 添加消息处理器
     if (!messageHandlers.value.has(topic)) {
       messageHandlers.value.set(topic, new Set())
     }
     messageHandlers.value.get(topic).add(handler)
-    
+    console.log(`[ConnectionStore] ✅ Added handler for ${topic}, total handlers: ${messageHandlers.value.get(topic).size}`)
+
     // 如果还没有订阅这个主题，发送订阅请求
     if (!subscribedTopics.value.has(topic)) {
       const subscribeMsg = {
@@ -312,17 +321,22 @@ export const useConnectionStore = defineStore('connection', () => {
         topic: topic,
         type: messageType
       }
-      
+
+      console.log(`[ConnectionStore] 📤 Sending subscription request:`, subscribeMsg)
+
       if (sendMessage(subscribeMsg)) {
         subscribedTopics.value.add(topic)
-        console.log(`Subscribed to ${topic}`)
+        console.log(`[ConnectionStore] ✅ Subscribed to ${topic}`)
+        console.log(`[ConnectionStore] 📊 Current subscriptions: ${Array.from(subscribedTopics.value)}`)
         return true
+      } else {
+        console.error(`[ConnectionStore] ❌ Failed to send subscription message for ${topic}`)
+        return false
       }
     } else {
+      console.log(`[ConnectionStore] 📝 Already subscribed to ${topic}`)
       return true
     }
-    
-    return false
   }
   
   // 取消订阅主题

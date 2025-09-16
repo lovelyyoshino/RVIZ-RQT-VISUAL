@@ -1,28 +1,28 @@
 <template>
-  <div class="gps-panel">
-    <div class="gps-info">
+  <div class="position-panel">
+    <div class="position-info">
       <div class="info-row">
-        <span class="label">纬度:</span>
-        <span class="value">{{ gpsData.latitude.toFixed(8) }}</span>
+        <span class="label">X位置:</span>
+        <span class="value">{{ positionData.x.toFixed(3) }}m</span>
       </div>
       <div class="info-row">
-        <span class="label">经度:</span>
-        <span class="value">{{ gpsData.longitude.toFixed(8) }}</span>
+        <span class="label">Y位置:</span>
+        <span class="value">{{ positionData.y.toFixed(3) }}m</span>
       </div>
       <div class="info-row">
-        <span class="label">海拔:</span>
-        <span class="value">{{ gpsData.altitude.toFixed(2) }}m</span>
+        <span class="label">Z位置:</span>
+        <span class="value">{{ positionData.z.toFixed(3) }}m</span>
       </div>
       <div class="info-row">
         <span class="label">精度:</span>
-        <span class="value" :class="accuracyClass">{{ gpsData.accuracy.toFixed(2) }}m</span>
+        <span class="value" :class="accuracyClass">{{ positionData.accuracy.toFixed(2) }}m</span>
       </div>
     </div>
-    
-    <div class="gps-status">
-      <div class="status-indicator" :class="gpsStatusClass">
+
+    <div class="position-status">
+      <div class="status-indicator" :class="positionStatusClass">
         <div class="status-dot"></div>
-        <span>{{ gpsStatusText }}</span>
+        <span>{{ positionStatusText }}</span>
       </div>
     </div>
   </div>
@@ -33,149 +33,173 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRosbridge } from '../../composables/useRosbridge'
 
 export default {
-  name: 'GpsPanel',
+  name: 'PositionPanel',
   setup() {
     const rosbridge = useRosbridge()
-    
-    const gpsData = ref({
-      latitude: 0.0,
-      longitude: 0.0,
-      altitude: 0.0,
+
+    const positionData = ref({
+      x: 0.0,
+      y: 0.0,
+      z: 0.0,
       accuracy: 0.0,
-      status: 'INACTIVE', // ACTIVE, INACTIVE, NO_FIX
-      satelliteCount: 0
+      status: 'INACTIVE', // ACTIVE, INACTIVE, NO_DATA
+      lastUpdate: null
     })
-    
-    const gpsStatusClass = computed(() => {
-      switch (gpsData.value.status) {
+
+    const positionStatusClass = computed(() => {
+      switch (positionData.value.status) {
         case 'ACTIVE':
           return 'status-active'
         case 'INACTIVE':
           return 'status-inactive'
-        case 'NO_FIX':
+        case 'NO_DATA':
           return 'status-no-fix'
         default:
           return 'status-inactive'
       }
     })
-    
-    const gpsStatusText = computed(() => {
-      switch (gpsData.value.status) {
+
+    const positionStatusText = computed(() => {
+      switch (positionData.value.status) {
         case 'ACTIVE':
-          return `GPS 活跃 (${gpsData.value.satelliteCount} 颗卫星)`
+          return `位置活跃 (精度: ${positionData.value.accuracy.toFixed(2)}m)`
         case 'INACTIVE':
-          return 'GPS 不活跃'
-        case 'NO_FIX':
-          return 'GPS 无定位'
+          return '位置不活跃'
+        case 'NO_DATA':
+          return '无位置数据'
         default:
-          return 'GPS 未知状态'
+          return '位置未知状态'
       }
     })
-    
+
     const accuracyClass = computed(() => {
-      const accuracy = gpsData.value.accuracy
-      if (accuracy < 2) return 'accuracy-good'
-      if (accuracy < 5) return 'accuracy-medium'
+      const accuracy = positionData.value.accuracy
+      if (accuracy < 0.1) return 'accuracy-good'
+      if (accuracy < 0.5) return 'accuracy-medium'
       return 'accuracy-poor'
     })
     
-    // 订阅 GPS 相关主题
-    let gpsSubscription = null
-    let statusSubscription = null
-    let odomSubscription = null
-    
-    const subscribeToGps = () => {
-      console.log('订阅GPS数据...')
-      
-      // 订阅 GPS 修复数据
-      gpsSubscription = rosbridge.subscribe(
-        '/gps/fix',
-        'sensor_msgs/msg/NavSatFix',
-        (message) => {
-          console.log('收到GPS fix数据:', message)
-          if (message.status && message.status.status >= 0) {
-            gpsData.value.latitude = message.latitude || gpsData.value.latitude
-            gpsData.value.longitude = message.longitude || gpsData.value.longitude
-            gpsData.value.altitude = message.altitude || gpsData.value.altitude
-            
-            // 更新精度信息
-            if (message.position_covariance && message.position_covariance.length > 0) {
-              gpsData.value.accuracy = Math.sqrt(
-                message.position_covariance[0] + message.position_covariance[4]
-              )
+    // 存储订阅引用
+    const subscriptions = []
+
+    const subscribeToPosition = () => {
+      console.log('[PositionPanel] 订阅位置数据...')
+
+      // 订阅多个可能的位置信息源
+      const positionTopics = [
+        { topic: '/odom', type: 'nav_msgs/msg/Odometry' },
+        { topic: '/robot_pose', type: 'geometry_msgs/msg/PoseStamped' },
+        { topic: '/amcl_pose', type: 'geometry_msgs/msg/PoseWithCovarianceStamped' },
+        { topic: '/pose', type: 'geometry_msgs/msg/PoseStamped' },
+        { topic: '/localization', type: 'nav_msgs/msg/Odometry' },
+        { topic: '/localization_2d', type: 'nav_msgs/msg/Odometry' }
+      ]
+
+      positionTopics.forEach(({ topic, type }) => {
+        console.log(`[PositionPanel] 尝试订阅位置主题: ${topic} (${type})`)
+
+        try {
+          const subscription = rosbridge.subscribe(topic, type, (message) => {
+            console.log(`[PositionPanel] 收到${topic}数据:`, message)
+
+            let position = null
+            let orientation = null
+
+            // 根据消息类型解析位置信息，兼容下划线前缀字段
+            if (type === 'nav_msgs/msg/Odometry') {
+              // 支持标准格式和下划线前缀格式
+              const pose = message.pose || message._pose
+              if (pose && (pose.pose || pose._pose)) {
+                const poseData = pose.pose || pose._pose || pose
+                position = poseData.position || poseData._position
+                orientation = poseData.orientation || poseData._orientation
+              }
+            } else if (type === 'geometry_msgs/msg/PoseStamped') {
+              const poseMsg = message.pose || message._pose
+              if (poseMsg) {
+                position = poseMsg.position || poseMsg._position
+                orientation = poseMsg.orientation || poseMsg._orientation
+              }
+            } else if (type === 'geometry_msgs/msg/PoseWithCovarianceStamped') {
+              const pose = message.pose || message._pose
+              if (pose && (pose.pose || pose._pose)) {
+                const poseData = pose.pose || pose._pose || pose
+                position = poseData.position || poseData._position
+                orientation = poseData.orientation || poseData._orientation
+              }
             }
-            
-            // 更新状态
-            gpsData.value.status = message.status.status >= 0 ? 'ACTIVE' : 'NO_FIX'
-          }
+
+            if (position) {
+              console.log(`[PositionPanel] 解析到位置信息:`, position)
+
+              // 更新位置信息（直接使用XYZ坐标），兼容下划线前缀
+              positionData.value.x = position.x || position._x || 0.0
+              positionData.value.y = position.y || position._y || 0.0
+              positionData.value.z = position.z || position._z || 0.0
+              positionData.value.status = 'ACTIVE'
+              positionData.value.lastUpdate = new Date()
+
+              // 计算位置精度，兼容下划线前缀
+              if (type === 'nav_msgs/msg/Odometry') {
+                const pose = message.pose || message._pose
+                const cov = pose?.covariance || pose?._covariance
+                if (cov && Array.isArray(cov)) {
+                  positionData.value.accuracy = Math.sqrt(cov[0] + cov[7] + cov[14])
+                } else {
+                  positionData.value.accuracy = 0.05 // 默认精度5cm
+                }
+              } else if (type === 'geometry_msgs/msg/PoseWithCovarianceStamped') {
+                const pose = message.pose || message._pose
+                const cov = pose?.covariance || pose?._covariance
+                if (cov && Array.isArray(cov)) {
+                  positionData.value.accuracy = Math.sqrt(cov[0] + cov[7] + cov[14])
+                } else {
+                  positionData.value.accuracy = 0.05 // 默认精度5cm
+                }
+              } else {
+                positionData.value.accuracy = 0.05 // 默认精度5cm
+              }
+
+              console.log(`[PositionPanel] 位置更新: (${positionData.value.x.toFixed(3)}, ${positionData.value.y.toFixed(3)}, ${positionData.value.z.toFixed(3)})`)
+            } else {
+              console.warn(`[PositionPanel] 无法从${topic}解析位置信息`)
+            }
+          })
+
+          subscriptions.push({ topic, subscription })
+          console.log(`[PositionPanel] 成功订阅位置主题: ${topic}`)
+        } catch (error) {
+          console.warn(`[PositionPanel] 订阅${topic}失败:`, error)
         }
-      )
-      
-      // 订阅 GPS 状态数据
-      statusSubscription = rosbridge.subscribe(
-        '/gps/status',
-        'gps_msgs/msg/GPSStatus',
-        (message) => {
-          console.log('收到GPS状态数据:', message)
-          if (message.satellites_used !== undefined) {
-            gpsData.value.satelliteCount = message.satellites_used
-          }
-        }
-      )
-      
-      // 订阅里程计数据作为备选位置信息
-      odomSubscription = rosbridge.subscribe(
-        '/odom',
-        'nav_msgs/msg/Odometry',
-        (message) => {
-        console.log('收到里程计数据:', message)
-        if (message.pose && message.pose.pose && message.pose.pose.position) {
-          const pos = message.pose.pose.position
-          const orientation = message.pose.pose.orientation
-          
-          // 总是使用里程计数据更新位置（作为相对位置）
-          gpsData.value.latitude = pos.y  // 使用Y作为纬度方向
-          gpsData.value.longitude = pos.x  // 使用X作为经度方向
-          gpsData.value.altitude = pos.z
-          gpsData.value.status = 'ACTIVE'
-          
-          // 计算位置精度（基于协方差）
-          if (message.pose && message.pose.covariance) {
-            const cov = message.pose.covariance
-            gpsData.value.accuracy = Math.sqrt(cov[0] + cov[7] + cov[14]) // x,y,z方差的平方根
-          } else {
-            gpsData.value.accuracy = 0.1 // 里程计通常精度较高
-          }
-          
-          // 计算卫星数量（模拟，基于精度）
-          gpsData.value.satelliteCount = Math.min(12, Math.max(4, Math.floor(1 / gpsData.value.accuracy * 8)))
-        }
-        }
-      )
+      })
     }
     
     onMounted(() => {
-      console.log('GpsPanel mounted - 订阅真实GPS数据')
-      subscribeToGps()
+      console.log('[PositionPanel] mounted - 订阅位置数据')
+      subscribeToPosition()
     })
-    
+
     onUnmounted(() => {
-      console.log('GpsPanel unmounted - 清理订阅')
-      if (gpsSubscription) {
-        rosbridge.unsubscribe('/gps/fix')
-      }
-      if (statusSubscription) {
-        rosbridge.unsubscribe('/gps/status') 
-      }
-      if (odomSubscription) {
-        rosbridge.unsubscribe('/odom')
-      }
+      console.log('[PositionPanel] 组件卸载 - 清理所有订阅')
+
+      // 清理所有位置订阅
+      subscriptions.forEach(({ topic, subscription }) => {
+        try {
+          rosbridge.unsubscribe(topic)
+          console.log(`[PositionPanel] 清理位置订阅: ${topic}`)
+        } catch (e) {
+          console.warn(`[PositionPanel] 清理${topic}订阅失败:`, e)
+        }
+      })
+
+      // 清空订阅数组
+      subscriptions.length = 0
     })
-    
+
     return {
-      gpsData,
-      gpsStatusClass,
-      gpsStatusText,
+      positionData,
+      positionStatusClass,
+      positionStatusText,
       accuracyClass
     }
   }
@@ -183,7 +207,7 @@ export default {
 </script>
 
 <style scoped>
-.gps-panel {
+.position-panel {
   padding: 8px 12px;
   font-size: 12px;
   height: 100%;
@@ -192,7 +216,7 @@ export default {
   justify-content: space-between;
 }
 
-.gps-info {
+.position-info {
   flex: 1;
 }
 
@@ -226,7 +250,7 @@ export default {
   color: #f56c6c;
 }
 
-.gps-status {
+.position-status {
   margin-top: 8px;
 }
 

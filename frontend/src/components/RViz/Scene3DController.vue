@@ -91,33 +91,8 @@
     <div class="control-section">
       <h4>地图设置</h4>
       <div class="map-controls">
+        
         <div class="control-item">
-          <label>地图加载方式:</label>
-          <el-radio-group v-model="mapLoadMode" @change="onMapModeChange">
-            <el-radio label="topic">主题订阅</el-radio>
-            <el-radio label="file">文件加载</el-radio>
-          </el-radio-group>
-        </div>
-        
-        <div class="control-item" v-if="mapLoadMode === 'topic'">
-          <label>地图主题:</label>
-          <el-select 
-            v-model="selectedMapTopic" 
-            @change="onMapTopicChange"
-            placeholder="选择地图主题"
-            size="small"
-            style="width: 100%"
-          >
-            <el-option
-              v-for="topic in availableMapTopics"
-              :key="topic.name"
-              :label="topic.label"
-              :value="topic.name"
-            />
-          </el-select>
-        </div>
-        
-        <div class="control-item" v-if="mapLoadMode === 'file'">
           <label>地图文件:</label>
           <div class="file-controls">
             <el-input
@@ -315,7 +290,6 @@ export default {
     const pointOpacity = ref(0.8)
     
     // 地图设置
-    const mapLoadMode = ref('topic')
     const selectedMapTopic = ref('')
     const mapFilePath = ref('')
     const showMap = ref(true)
@@ -439,10 +413,6 @@ export default {
     const onPointCloudChange = (topic) => {
       console.log('点云主题切换:', topic)
       emit('pointcloud-change', topic)
-    }
-
-    const onMapModeChange = (mode) => {
-      console.log('地图加载方式切换:', mode)
     }
 
     const onMapTopicChange = (topic) => {
@@ -597,7 +567,6 @@ export default {
       pointOpacity,
       
       // 地图设置
-      mapLoadMode,
       selectedMapTopic,
       mapFilePath,
       showMap,
@@ -628,7 +597,6 @@ export default {
       onLaserTypeChange,
       onLaser2DChange,
       onPointCloudChange,
-      onMapModeChange,
       onMapTopicChange,
       selectMapFile,
       onFileSelected,

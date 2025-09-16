@@ -275,10 +275,12 @@ class RosbridgeService:
             if topic not in info.subscribed_topics:
                 info.subscribed_topics.append(topic)
                 logger.info(f"✅ Added {topic} to client {client_id} subscription list")
+                logger.info(f"🔍 Updated subscription list for {client_id}: {info.subscribed_topics}")
             else:
                 logger.info(f"📝 Client {client_id} already subscribed to {topic}")
         else:
             logger.error(f"❌ Client {client_id} connection info not found")
+            logger.error(f"🔍 Available connections: {list(self.connection_manager.connection_info.keys())}")
             return
 
         # 创建 ROS2 订阅者（如果不存在）
@@ -290,6 +292,11 @@ class RosbridgeService:
 
         logger.info(f"📊 Current subscriptions for {client_id}: {info.subscribed_topics if info else 'none'}")
         logger.info(f"📊 Total active ROS2 subscribers: {len(self.subscribers)}")
+
+        # 🔍 验证订阅是否正确设置
+        logger.info(f"🔍 Verification - All connection subscriptions:")
+        for cid, cinfo in self.connection_manager.connection_info.items():
+            logger.info(f"   - {cid}: {cinfo.subscribed_topics}")
             
     def _get_message_class(self, msg_type: str):
         """获取消息类型对应的类"""
@@ -316,7 +323,10 @@ class RosbridgeService:
             
             # 几何消息类型
             'geometry_msgs/msg/Twist': ('geometry_msgs.msg', 'Twist'),
+            'geometry_msgs/msg/Pose': ('geometry_msgs.msg', 'Pose'),
             'geometry_msgs/msg/PoseStamped': ('geometry_msgs.msg', 'PoseStamped'),
+            'geometry_msgs/msg/PoseWithCovariance': ('geometry_msgs.msg', 'PoseWithCovariance'),
+            'geometry_msgs/msg/PoseWithCovarianceStamped': ('geometry_msgs.msg', 'PoseWithCovarianceStamped'),
             'geometry_msgs/msg/Point': ('geometry_msgs.msg', 'Point'),
             'geometry_msgs/msg/Vector3': ('geometry_msgs.msg', 'Vector3'),
             'geometry_msgs/msg/Quaternion': ('geometry_msgs.msg', 'Quaternion'),
@@ -329,6 +339,10 @@ class RosbridgeService:
             'nav_msgs/msg/Odometry': ('nav_msgs.msg', 'Odometry'),
             'nav_msgs/msg/MapMetaData': ('nav_msgs.msg', 'MapMetaData'),
             'nav_msgs/msg/GridCells': ('nav_msgs.msg', 'GridCells'),
+
+            # GPS和导航
+            'sensor_msgs/msg/NavSatFix': ('sensor_msgs.msg', 'NavSatFix'),
+            'sensor_msgs/msg/NavSatStatus': ('sensor_msgs.msg', 'NavSatStatus'),
             
             # 可视化消息类型
             'visualization_msgs/msg/Marker': ('visualization_msgs.msg', 'Marker'),
@@ -394,11 +408,11 @@ class RosbridgeService:
             def callback(msg):
                 # ROS2回调必须是同步的，但我们需要异步处理
                 # 使用线程安全的方式将消息放入队列
-                logger.info(f"🚀 ROS2 CALLBACK TRIGGERED for {topic}! Message type: {type(msg).__name__}")
+                logger.debug(f"🚀 ROS2 CALLBACK TRIGGERED for {topic}! Message type: {type(msg).__name__}")
                 try:
                     # 调用同步版本的消息处理
                     self._on_message_received_sync(topic, msg)
-                    logger.info(f"✅ Successfully processed callback for {topic}")
+                    logger.debug(f"✅ Successfully processed callback for {topic}")
                 except Exception as e:
                     logger.error(f"❌ Error in message callback for {topic}: {e}")
                 
@@ -581,7 +595,7 @@ class RosbridgeService:
                     if self._message_counts[topic] == 1:
                         logger.info(f"🎉 First message received on topic {topic}! Type: {type(msg).__name__}")
                         logger.info(f"✅ Successfully bridged ROS2 callback to async processing for {topic}")
-                    elif self._message_counts[topic] % 10 == 0:
+                    elif self._message_counts[topic] % 50 == 0:
                         logger.info(f"📊 Received {self._message_counts[topic]} messages on topic {topic}")
 
                     logger.debug(f"📨 Processing message on topic {topic}, type: {type(msg).__name__}, queue size: {self.message_queue.qsize()}")
@@ -653,20 +667,35 @@ class RosbridgeService:
             active_subscribers = sum(1 for info in self.connection_manager.connection_info.values()
                                    if topic in info.subscribed_topics)
 
+            # 🔍 调试：详细打印连接信息
+            logger.debug(f"🔍 Debug subscription check for {topic}:")
+            logger.debug(f"   - Total active connections: {len(self.connection_manager.connection_info)}")
+            for client_id, info in self.connection_manager.connection_info.items():
+                logger.debug(f"   - Client {client_id}: subscribed to {info.subscribed_topics}")
+            logger.debug(f"   - Active subscribers for {topic}: {active_subscribers}")
+
             if active_subscribers > 0:
-                logger.info(f"🔔 Broadcasting message for {topic} to {active_subscribers} subscribers")
+                logger.debug(f"🔔 Broadcasting message for {topic} to {active_subscribers} subscribers")
 
                 # 广播给所有订阅该主题的客户端
                 broadcast_result = await self.connection_manager.broadcast(rosbridge_msg)
 
                 if broadcast_result:
-                    logger.info(f"📤 Successfully broadcast {topic} to {active_subscribers} clients")
+                    logger.debug(f"📤 Successfully broadcast {topic} to {active_subscribers} clients")
                 else:
                     logger.warning(f"⚠️ Failed to broadcast {topic} to clients")
             else:
                 logger.warning(f"📭 No active subscribers for {topic}, message cached only")
                 logger.warning(f"💡 Tip: Frontend needs to subscribe to {topic} to receive messages")
                 logger.warning(f"📊 Message details: type={type(msg).__name__}, size={len(str(msg_dict))} chars")
+
+                # 🔍 额外调试信息
+                logger.warning(f"🔍 Debug: Total connections: {len(self.connection_manager.connection_info)}")
+                if len(self.connection_manager.connection_info) > 0:
+                    for client_id, info in self.connection_manager.connection_info.items():
+                        logger.warning(f"🔍   Client {client_id}: {len(info.subscribed_topics)} subscriptions: {info.subscribed_topics}")
+                else:
+                    logger.warning(f"🔍 No connection info found - this indicates a connection tracking issue")
 
             # 缓存消息
             self.message_cache.append({
@@ -709,13 +738,13 @@ class RosbridgeService:
             
             # 处理点云数据
             if len(pointcloud_msg.data) > 0:
-                logger.info(f"Processing pointcloud data - Total bytes: {len(pointcloud_msg.data)}, Point step: {pointcloud_msg.point_step}")
+                logger.debug(f"Processing pointcloud data - Total bytes: {len(pointcloud_msg.data)}, Point step: {pointcloud_msg.point_step}")
                 
                 # 检查是否需要采样（如果点数过多）
                 total_points = pointcloud_msg.width * pointcloud_msg.height
                 max_points = 50000  # 增加最大传输点数
                 
-                logger.info(f"Pointcloud info - Width: {pointcloud_msg.width}, Height: {pointcloud_msg.height}, Total points: {total_points}")
+                logger.debug(f"Pointcloud info - Width: {pointcloud_msg.width}, Height: {pointcloud_msg.height}, Total points: {total_points}")
                 
                 if total_points > max_points and total_points > 0:
                     # 采样数据 - 修复采样逻辑
@@ -749,11 +778,11 @@ class RosbridgeService:
                         import base64
                         result['data'] = base64.b64encode(pointcloud_msg.data).decode('ascii')
                         result['data_encoding'] = 'base64'
-                        logger.info(f"Direct pointcloud transmission - {len(pointcloud_msg.data)} bytes, {total_points} points, Base64 encoded")
+                        logger.debug(f"Direct pointcloud transmission - {len(pointcloud_msg.data)} bytes, {total_points} points, Base64 encoded")
                     else:
                         result['data'] = list(pointcloud_msg.data)
                         result['data_encoding'] = 'array'
-                        logger.info(f"Direct pointcloud transmission - {len(pointcloud_msg.data)} bytes, {total_points} points, as array")
+                        logger.debug(f"Direct pointcloud transmission - {len(pointcloud_msg.data)} bytes, {total_points} points, as array")
 
                     result['sampled'] = False
             else:
@@ -824,7 +853,8 @@ class RosbridgeService:
         try:
             import numpy as np
             from builtin_interfaces.msg import Time, Duration
-            from geometry_msgs.msg import Point, Quaternion, Pose, PoseStamped, Transform, TransformStamped
+            from geometry_msgs.msg import Point, Quaternion, Pose, PoseStamped, PoseWithCovariance, PoseWithCovarianceStamped, Transform, TransformStamped
+            from nav_msgs.msg import Odometry
             from std_msgs.msg import Header
             from sensor_msgs.msg import PointCloud2, Image, CompressedImage
             
@@ -870,6 +900,14 @@ class RosbridgeService:
                         result[slot] = {
                             'position': {'x': float(value.position.x), 'y': float(value.position.y), 'z': float(value.position.z)},
                             'orientation': {'x': float(value.orientation.x), 'y': float(value.orientation.y), 'z': float(value.orientation.z), 'w': float(value.orientation.w)}
+                        }
+                    elif isinstance(value, PoseWithCovariance):
+                        result[slot] = {
+                            'pose': {
+                                'position': {'x': float(value.pose.position.x), 'y': float(value.pose.position.y), 'z': float(value.pose.position.z)},
+                                'orientation': {'x': float(value.pose.orientation.x), 'y': float(value.pose.orientation.y), 'z': float(value.pose.orientation.z), 'w': float(value.pose.orientation.w)}
+                            },
+                            'covariance': [float(c) for c in value.covariance] if hasattr(value, 'covariance') else []
                         }
                     # 处理numpy数组
                     elif isinstance(value, np.ndarray):

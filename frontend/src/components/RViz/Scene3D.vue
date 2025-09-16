@@ -17,7 +17,7 @@
     <!-- 调试快捷键提示 -->
     <div class="debug-hint" v-show="!loading">
       <div class="hint-content">
-        <small>快捷键: D-调试 | R-重置 | F-适配点云 | G-网格 | M-适配地图 | C-检查订阅</small>
+        <small>快捷键: D-调试 | R-重置 | F-适配点云 | G-网格 | M-适配地图 | C-检查订阅 | X-清除全部 | Z-取消订阅</small>
       </div>
     </div>
   </div>
@@ -65,6 +65,9 @@ export default {
     // 地图相关对象
     const mapMesh = ref(null)
     const mapTexture = ref(null)
+
+    // 轨迹记录（用于里程计）
+    let trajectoryPoints = []
     
     // FPS 计算
     let lastTime = 0
@@ -80,10 +83,11 @@ export default {
         scene = new THREE.Scene()
         scene.background = new THREE.Color(0x2c3e50)
         
-        // 创建相机
+        // 创建相机 - 设置为俯视XY平面的视角
         const aspect = containerRef.value.clientWidth / containerRef.value.clientHeight
         camera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000)
-        camera.position.set(5, 5, 5)
+        // 默认相机位置，与RViz类似的斜视角
+        camera.position.set(10, -10, 10)  // 从右后上方看向原点
         camera.lookAt(0, 0, 0)
         
         // 创建渲染器
@@ -115,13 +119,23 @@ export default {
         directionalLight.shadow.mapSize.height = 2048
         scene.add(directionalLight)
         
-        // 创建网格
+        // 创建网格 - 在XY平面上，Z=0，与RViz一致
+        // Three.js的GridHelper默认在XZ平面，需要旋转到XY平面
         gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0x444444)
+        gridHelper.position.set(0, 0, 0)  // 网格中心在原点
+        gridHelper.rotateX(-Math.PI / 2)  // 旋转90度使网格在XY平面
         scene.add(gridHelper)
-        
-        // 创建坐标轴
+
+        // 创建坐标轴 - 与RViz约定一致：X右(红)，Y前(绿)，Z上(蓝)
+        // Three.js默认坐标系：X右，Y上，Z前
+        // RViz标准坐标系：X前，Y左，Z上
+        // 为了与RViz显示一致，我们不旋转坐标轴，直接使用Three.js的默认方向
         axesHelper = new THREE.AxesHelper(2)
+        axesHelper.position.set(0, 0, 0)
         scene.add(axesHelper)
+
+        // 添加坐标系标签
+        createCoordinateSystemLabels()
         
         // 窗口大小调整监听
         window.addEventListener('resize', onWindowResize)
@@ -134,6 +148,13 @@ export default {
         
         loading.value = false
         console.log('3D Scene initialized successfully')
+        console.log('坐标系设置：')
+        console.log('- X轴：向前（红色）')
+        console.log('- Y轴：向左（绿色）')
+        console.log('- Z轴：向上（蓝色）')
+        console.log('- 地图在XY平面，Z=0')
+        console.log('- 点云Z轴表示高程')
+        console.log('- 默认相机俯视XY平面')
         
       } catch (error) {
         console.error('Failed to initialize 3D scene:', error)
@@ -141,6 +162,59 @@ export default {
       }
     }
     
+    /**
+     * 创建坐标系标签
+     */
+    const createCoordinateSystemLabels = () => {
+      try {
+        // 创建文本材质
+        const canvas = document.createElement('canvas')
+        const context = canvas.getContext('2d')
+        canvas.width = 64
+        canvas.height = 64
+
+        // X轴标签 (红色)
+        context.clearRect(0, 0, 64, 64)
+        context.fillStyle = '#FF0000'
+        context.font = 'Bold 24px Arial'
+        context.fillText('X', 20, 40)
+        const xTexture = new THREE.CanvasTexture(canvas)
+        const xMaterial = new THREE.SpriteMaterial({ map: xTexture })
+        const xSprite = new THREE.Sprite(xMaterial)
+        xSprite.position.set(2.5, 0, 0)
+        xSprite.scale.set(0.5, 0.5, 1)
+        scene.add(xSprite)
+
+        // Y轴标签 (绿色)
+        context.clearRect(0, 0, 64, 64)
+        context.fillStyle = '#00FF00'
+        context.font = 'Bold 24px Arial'
+        context.fillText('Y', 20, 40)
+        const yTexture = new THREE.CanvasTexture(canvas)
+        const yMaterial = new THREE.SpriteMaterial({ map: yTexture })
+        const ySprite = new THREE.Sprite(yMaterial)
+        ySprite.position.set(0, 2.5, 0)
+        ySprite.scale.set(0.5, 0.5, 1)
+        scene.add(ySprite)
+
+        // Z轴标签 (蓝色)
+        context.clearRect(0, 0, 64, 64)
+        context.fillStyle = '#0000FF'
+        context.font = 'Bold 24px Arial'
+        context.fillText('Z', 20, 40)
+        const zTexture = new THREE.CanvasTexture(canvas)
+        const zMaterial = new THREE.SpriteMaterial({ map: zTexture })
+        const zSprite = new THREE.Sprite(zMaterial)
+        zSprite.position.set(0, 0, 2.5)
+        zSprite.scale.set(0.5, 0.5, 1)
+        scene.add(zSprite)
+
+        console.log('坐标系标签已创建')
+      } catch (error) {
+        console.warn('创建坐标系标签失败:', error)
+      }
+    }
+
     /**
      * 渲染循环
      */
@@ -294,6 +368,14 @@ export default {
             // C键：检查订阅状态
             checkSubscriptionStatus()
             break
+          case 'x':
+            // X键：清除所有可视化对象
+            clearAllVisualizations()
+            break
+          case 'z':
+            // Z键：取消所有订阅
+            unsubscribeAllTopics()
+            break
         }
       }
     }
@@ -301,7 +383,8 @@ export default {
     // 公共方法
     const resetCamera = () => {
       if (camera && controls) {
-        camera.position.set(5, 5, 5)
+        // 重置为斜上方视角，与RViz类似
+        camera.position.set(10, -10, 10)
         controls.target.set(0, 0, 0)
         controls.update()
       }
@@ -383,11 +466,21 @@ export default {
     const subscribeToRosTopic = (topicName, messageType) => {
       console.log(`[Scene3D] 订阅ROS主题: ${topicName}, 类型: ${messageType}`)
       
-      // 如果已经订阅了这个主题，先取消订阅
-      if (rosSubscriptions.has(topicName)) {
-        console.log(`[Scene3D] 主题 ${topicName} 已存在，先取消订阅`)
-        unsubscribeFromRosTopic(topicName)
+        // 先清理所有相关的订阅和可视化对象（实现真正的单一主题订阅）
+      console.log(`[Scene3D] 准备订阅新主题: ${topicName}, 当前订阅数: ${rosSubscriptions.size}`)
+
+      // 清理所有旧的订阅和可视化对象
+      if (rosSubscriptions.size > 0) {
+        console.log(`[Scene3D] 清理所有旧订阅...`)
+        const oldTopics = Array.from(rosSubscriptions.keys())
+        oldTopics.forEach(oldTopicName => {
+          console.log(`[Scene3D] 取消订阅: ${oldTopicName}`)
+          unsubscribeFromRosTopic(oldTopicName)
+        })
       }
+
+      // 清理所有可视化对象
+      clearAllVisualizations()
       
       try {
         // 使用rosbridge订阅主题
@@ -396,13 +489,29 @@ export default {
         const subscription = rosbridge.subscribe(topicName, messageType, (message) => {
           const now = Date.now()
           const subInfo = rosSubscriptions.get(topicName)
-          
+
+          console.log(`[Scene3D] 📨 收到主题消息: ${topicName}`, {
+            messageType: typeof message,
+            hasRanges: message?.ranges?.length,
+            hasData: message?.data?.length,
+            hasPoints: message?.points?.length,
+            messageKeys: message ? Object.keys(message) : []
+          })
+
           if (subInfo) {
             subInfo.messageCount = (subInfo.messageCount || 0) + 1
             subInfo.lastMessageTime = now
-            
-            console.log(`[Scene3D] 🎉 收到主题 ${topicName} 的第${subInfo.messageCount}条消息:`, message)
-            updateVisualization(topicName, messageType, message)
+
+            console.log(`[Scene3D] 🎉 收到主题 ${topicName} 的第${subInfo.messageCount}条消息`)
+
+            // 确保消息不为空
+            if (message) {
+              updateVisualization(topicName, messageType, message)
+            } else {
+              console.warn(`[Scene3D] 收到空消息: ${topicName}`)
+            }
+          } else {
+            console.warn(`[Scene3D] 收到消息但订阅信息不存在: ${topicName}`)
           }
         })
         
@@ -453,27 +562,49 @@ export default {
       const subscription = rosSubscriptions.get(topicName)
       if (subscription) {
         try {
+          console.log(`[Scene3D] 取消订阅主题: ${topicName}`)
           rosbridge.unsubscribe(subscription)
           rosSubscriptions.delete(topicName)
           removeVisualization(topicName)
-          console.log(`已取消订阅主题: ${topicName}`)
+          console.log(`[Scene3D] 已成功取消订阅主题: ${topicName}`)
         } catch (error) {
-          console.error(`取消订阅主题 ${topicName} 失败:`, error)
+          console.error(`[Scene3D] 取消订阅主题 ${topicName} 失败:`, error)
         }
+      } else {
+        console.warn(`[Scene3D] 试图取消不存在的订阅: ${topicName}`)
+        // 仍然尝试清除可视化对象
+        removeVisualization(topicName)
       }
     }
+
+    // 取消所有订阅
+    const unsubscribeAllTopics = () => {
+      console.log(`[Scene3D] 取消所有订阅, 当前订阅数: ${rosSubscriptions.size}`)
+
+      rosSubscriptions.forEach((subscription, topicName) => {
+        unsubscribeFromRosTopic(topicName)
+      })
+
+      clearAllVisualizations()
+    }
     
+    // 添加更新频率控制
+    let lastLogTime = 0
+    let messageCount = 0
+
     const updateVisualization = (topic, messageType, message) => {
-      console.log(`[Scene3D] 📡 收到可视化更新请求`)
-      console.log(`[Scene3D] - 主题: ${topic}`)
-      console.log(`[Scene3D] - 消息类型: ${messageType}`)
-      console.log(`[Scene3D] - 消息内容:`, message)
-      console.log(`[Scene3D] - 消息类型: ${typeof message}`)
-      console.log(`[Scene3D] - 消息键值:`, Object.keys(message || {}))
-      
+      messageCount++
+      const now = Date.now()
+
+      // 只每5秒记录一次日志，避免刷屏
+      if (now - lastLogTime > 5000) {
+        console.log(`[Scene3D] 📡 处理可视化更新 - 主题: ${topic}, 消息类型: ${messageType}, 最近5秒处理了${messageCount}条消息`)
+        lastLogTime = now
+        messageCount = 0
+      }
+
       // 记录处理前的状态
       const beforeCount = visualizationObjects.size
-      console.log(`[Scene3D] - 处理前可视化对象数: ${beforeCount}`)
       
       try {
         // 根据消息类型更新可视化
@@ -503,29 +634,30 @@ export default {
             console.log(`[Scene3D] 🔄 处理路径消息...`)
             updatePath(topic, message)
             break
-          case 'nav_msgs/msg/OccupancyGrid':
-          case 'nav_msgs/OccupancyGrid':
-            console.log(`[Scene3D] 🔄 处理栅格地图消息...`)
-            updateOccupancyGrid(topic, message)
+          case 'nav_msgs/msg/Odometry':
+          case 'nav_msgs/Odometry':
+            console.log(`[Scene3D] 🔄 处理里程计消息...`)
+            updateOdometry(topic, message)
+            break
+          case 'geometry_msgs/msg/PoseStamped':
+          case 'geometry_msgs/PoseStamped':
+            console.log(`[Scene3D] 🔄 处理位置消息...`)
+            updatePoseStamped(topic, message)
+            break
+          case 'geometry_msgs/msg/PoseWithCovarianceStamped':
+          case 'geometry_msgs/PoseWithCovarianceStamped':
+            console.log(`[Scene3D] 🔄 处理带协方差位置消息...`)
+            updatePoseWithCovarianceStamped(topic, message)
             break
           default:
             console.warn(`[Scene3D] ⚠️ 不支持的消息类型: ${messageType}`)
             return
         }
         
-        // 记录处理后的状态
+        // 只在首次或调试时记录详细信息
         const afterCount = visualizationObjects.size
-        console.log(`[Scene3D] - 处理后可视化对象数: ${afterCount}`)
-        
-        if (afterCount > beforeCount) {
+        if (afterCount > beforeCount && now - lastLogTime <= 1000) {
           console.log(`[Scene3D] ✅ 成功创建可视化对象，新增 ${afterCount - beforeCount} 个对象`)
-          
-          // 列出所有可视化对象
-          visualizationObjects.forEach((obj, topicName) => {
-            console.log(`[Scene3D] - 对象: ${topicName}, 类型: ${obj.userData?.messageType}, 可见: ${obj.visible}`)
-          })
-        } else if (afterCount === beforeCount) {
-          console.log(`[Scene3D] ⚠️ 处理完成但没有新增可视化对象`)
         }
         
       } catch (error) {
@@ -536,9 +668,59 @@ export default {
     const removeVisualization = (topic) => {
       const object = visualizationObjects.get(topic)
       if (object) {
+        console.log(`[Scene3D] 清除可视化对象: ${topic}`)
+
+        // 递归清理对象和其子对象
+        const cleanupObject = (obj) => {
+          if (obj.geometry) {
+            obj.geometry.dispose()
+          }
+          if (obj.material) {
+            if (Array.isArray(obj.material)) {
+              obj.material.forEach(mat => mat.dispose())
+            } else {
+              obj.material.dispose()
+            }
+          }
+          if (obj.children) {
+            obj.children.forEach(child => cleanupObject(child))
+          }
+        }
+
+        cleanupObject(object)
         scene.remove(object)
         visualizationObjects.delete(topic)
+
+        console.log(`[Scene3D] 已清除可视化对象: ${topic}, 剩余对象数: ${visualizationObjects.size}`)
       }
+    }
+
+    // 清除所有可视化对象（但保留地图）
+    const clearAllVisualizations = () => {
+      console.log(`[Scene3D] 清除所有可视化对象, 当前数量: ${visualizationObjects.size}`)
+
+      // 需要保留的主题类型（地图相关）
+      const preservedTopics = new Set()
+
+      visualizationObjects.forEach((object, topic) => {
+        // 检查是否是需要保留的主题类型
+        const subscription = rosSubscriptions.get(topic)
+        const messageType = subscription?.messageType || ''
+
+        // 只保留PGM加载的地图，不保留主题订阅的地图
+        if (topic === 'loaded_map') {
+          console.log(`[Scene3D] 保留PGM加载的地图: ${topic}`)
+          preservedTopics.add(topic)
+        } else {
+          removeVisualization(topic)
+        }
+      })
+
+      // 清理轨迹点
+      trajectoryPoints = []
+
+      console.log(`[Scene3D] 已清除可视化对象，保留 ${preservedTopics.size} 个地图对象`)
+      ElMessage.info(`已清除可视化对象，保留了 ${preservedTopics.size} 个地图`)
     }
     
     const getPerformanceStats = () => {
@@ -546,11 +728,18 @@ export default {
     }
     
     // 可视化更新方法
+    // 点云更新计数器
+    let pointCloudUpdateCount = 0
+
     const updatePointCloud = (topic, message) => {
-      console.log(`Updating point cloud for ${topic}`)
-      console.log('Raw message:', message)
-      console.log('Message keys:', Object.keys(message || {}))
-      console.log('Message type:', typeof message)
+      pointCloudUpdateCount++
+
+      // 只在前几次或每100次更新时记录详细信息
+      const shouldLog = pointCloudUpdateCount <= 3 || pointCloudUpdateCount % 100 === 0
+
+      if (shouldLog) {
+        console.log(`Updating point cloud for ${topic} (update #${pointCloudUpdateCount})`)
+      }
       
       try {
         // 移除旧的点云
@@ -565,13 +754,11 @@ export default {
         
         // 解析点云数据
         if (message && typeof message === 'object') {
-          console.log('Processing PointCloud2 message')
-          console.log('Fields:', message.fields)
-          console.log('Width:', message.width)
-          console.log('Height:', message.height)
-          console.log('Point step:', message.point_step)
-          console.log('Data length:', message.data?.length)
-          console.log('Data type:', typeof message.data)
+          if (shouldLog) {
+            console.log('Processing PointCloud2 message')
+            console.log('Fields:', message.fields)
+            console.log('Width:', message.width, 'Height:', message.height, 'Point step:', message.point_step)
+          }
           
           // 如果是 PointCloud2 格式
           if (message.fields && message.data) {
@@ -579,14 +766,14 @@ export default {
             
             // 处理Base64编码的数据（ROSBridge通常这样传输）
             if (typeof message.data === 'string') {
-              console.log('Decoding Base64 data...')
+              if (shouldLog) console.log('Decoding Base64 data...')
               try {
                 const binaryString = atob(message.data)
                 dataArray = new Uint8Array(binaryString.length)
                 for (let i = 0; i < binaryString.length; i++) {
                   dataArray[i] = binaryString.charCodeAt(i)
                 }
-                console.log('Decoded data length:', dataArray.length)
+                if (shouldLog) console.log('Decoded data length:', dataArray.length)
               } catch (e) {
                 console.error('Base64 decode failed:', e)
                 dataArray = []
@@ -598,20 +785,20 @@ export default {
             const pointStep = message.point_step || 16
             const totalPoints = width * height
             
-            console.log(`Processing ${totalPoints} points with step ${pointStep}`)
-            
+            if (shouldLog) console.log(`Processing ${totalPoints} points with step ${pointStep}`)
+
             // 查找XYZ字段的偏移量
             let xOffset = 0, yOffset = 4, zOffset = 8
             if (message.fields && Array.isArray(message.fields)) {
               message.fields.forEach(field => {
-                console.log(`Field: ${field.name}, offset: ${field.offset}, datatype: ${field.datatype}`)
+                if (shouldLog) console.log(`Field: ${field.name}, offset: ${field.offset}, datatype: ${field.datatype}`)
                 if (field.name === 'x') xOffset = field.offset
                 else if (field.name === 'y') yOffset = field.offset
                 else if (field.name === 'z') zOffset = field.offset
               })
             }
-            
-            console.log(`Using offsets - X: ${xOffset}, Y: ${yOffset}, Z: ${zOffset}`)
+
+            if (shouldLog) console.log(`Using offsets - X: ${xOffset}, Y: ${yOffset}, Z: ${zOffset}`)
             
             // 解析点云数据
             const maxPoints = Math.min(totalPoints, 10000) // 限制最大点数
@@ -637,16 +824,19 @@ export default {
                   const z = dataView.getFloat32(zOffset, true)
                   
                   // 验证坐标值
-                  if (!isNaN(x) && !isNaN(y) && !isNaN(z) && 
+                  if (!isNaN(x) && !isNaN(y) && !isNaN(z) &&
                       isFinite(x) && isFinite(y) && isFinite(z) &&
                       Math.abs(x) < 1000 && Math.abs(y) < 1000 && Math.abs(z) < 1000) {
-                    
+
+                    // ROS坐标系转换到Three.js坐标系
+                    // ROS: X前，Y左，Z上 -> Three.js: X右，Y上，Z前
+                    // 转换：ROS(x,y,z) -> Three.js(x,y,z) 保持不变，因为我们已经旋转了坐标轴
                     positions.push(x, y, z)
                     pointsProcessed++
-                    
-                    // 根据高度生成颜色
+
+                    // 根据Z轴高度生成颜色（高程着色）
                     const normalizedZ = Math.max(0, Math.min(1, (z + 2) / 4)) // 假设z范围-2到2
-                    const hue = (1 - normalizedZ) * 240 / 360 // 从蓝色到红色
+                    const hue = (1 - normalizedZ) * 240 / 360 // 从蓝色(低)到红色(高)
                     const color = new THREE.Color().setHSL(hue, 0.8, 0.6)
                     colors.push(color.r, color.g, color.b)
                   }
@@ -656,11 +846,11 @@ export default {
               }
             }
             
-            console.log(`Successfully processed ${pointsProcessed} points out of ${maxPoints}`)
+            if (shouldLog) console.log(`Successfully processed ${pointsProcessed} points out of ${maxPoints}`)
           }
           // 如果是简单的点数组格式
           else if (Array.isArray(message.points)) {
-            console.log('Processing points array format')
+            if (shouldLog) console.log('Processing points array format')
             for (let i = 0; i < Math.min(message.points.length, 5000); i++) {
               const point = message.points[i]
               if (point && typeof point === 'object') {
@@ -729,13 +919,20 @@ export default {
           scene.add(pointCloud)
           visualizationObjects.set(topic, pointCloud)
           
-          // 自动调整相机视角以查看点云
-          fitCameraToPointCloud(pointCloud)
+          // 只在首次或特殊情况下调整相机视角，避免频繁变化
+          if (pointCloudUpdateCount <= 3) {
+            fitCameraToPointCloud(pointCloud)
+          }
           
-          console.log(`✅ Added point cloud with ${pointsProcessed} points`)
-          console.log(`Point size: ${material.size}, Bounding box:`, box)
-          
-          ElMessage.success(`成功显示点云 ${topic}: ${pointsProcessed} 个点`)
+          if (shouldLog) {
+            console.log(`✅ Added point cloud with ${pointsProcessed} points`)
+            console.log(`Point size: ${material.size}, Bounding box:`, box)
+          }
+
+          // 只在首次显示成功消息
+          if (pointCloudUpdateCount <= 3) {
+            ElMessage.success(`成功显示点云 ${topic}: ${pointsProcessed} 个点`)
+          }
         } else {
           console.warn('No positions to create point cloud')
           ElMessage.warning(`点云 ${topic} 没有有效的位置数据`)
@@ -763,43 +960,250 @@ export default {
     }
     
     const updateLaserScan = (topic, message) => {
-      // 激光雷达可视化实现
-      console.log(`Updating laser scan for ${topic}:`, message)
-      
-      removeVisualization(topic)
-      
-      const geometry = new THREE.BufferGeometry()
-      const positions = []
-      
-      // 解析激光雷达数据 (简化实现)
-      if (message.ranges && message.ranges.length > 0) {
-        const angleMin = message.angle_min || -Math.PI
-        const angleIncrement = message.angle_increment || (2 * Math.PI) / message.ranges.length
-        
-        for (let i = 0; i < message.ranges.length; i++) {
-          const angle = angleMin + i * angleIncrement
-          const range = message.ranges[i]
-          
-          if (range > 0 && range < 100) {
-            const x = range * Math.cos(angle)
-            const y = range * Math.sin(angle)
-            positions.push(x, y, 0)
+      console.log(`[LaserScan] 开始处理激光雷达数据 for ${topic}`)
+
+      // 兼容不同的字段命名格式（有些有下划线前缀）
+      let ranges = message.ranges || message._ranges
+      const angle_min = message.angle_min || message._angle_min
+      const angle_max = message.angle_max || message._angle_max
+      const angle_increment = message.angle_increment || message._angle_increment
+      const range_min = message.range_min || message._range_min
+      const range_max = message.range_max || message._range_max
+      const header = message.header || message._header
+
+      // 处理ranges字段 - 可能是字符串格式的Python array
+      if (typeof ranges === 'string') {
+        console.log(`[LaserScan] ranges是字符串格式，尝试解析: ${ranges.substring(0, 100)}...`)
+        try {
+          // 解析Python array格式：array('f', [1.0, 2.0, 3.0, ...])
+          const match = ranges.match(/array\('f',\s*\[(.*)\]\)/)
+          if (match) {
+            const numbersStr = match[1]
+            // 分割并解析数字，处理inf和nan
+            ranges = numbersStr.split(',').map(str => {
+              const trimmed = str.trim()
+              if (trimmed === 'inf') return Infinity
+              if (trimmed === '-inf') return -Infinity
+              if (trimmed === 'nan') return NaN
+              return parseFloat(trimmed)
+            }).filter(val => !isNaN(val) && isFinite(val)) // 过滤掉无效值
+            console.log(`[LaserScan] 成功解析${ranges.length}个ranges值`)
+          } else {
+            console.error(`[LaserScan] 无法解析ranges字符串格式: ${ranges}`)
+            ranges = []
           }
+        } catch (e) {
+          console.error(`[LaserScan] 解析ranges字符串失败:`, e)
+          ranges = []
         }
       }
-      
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-      
-      const material = new THREE.PointsMaterial({
-        size: 0.1,
-        color: 0xff0000
+
+      console.log(`[LaserScan] 消息结构:`, {
+        ranges_length: ranges ? ranges.length : 'undefined',
+        angle_min: angle_min,
+        angle_max: angle_max,
+        angle_increment: angle_increment,
+        range_min: range_min,
+        range_max: range_max,
+        header: header
       })
-      
-      const laserScan = new THREE.Points(geometry, material)
-      laserScan.userData = { topic, messageType: 'sensor_msgs/msg/LaserScan' }
-      
-      scene.add(laserScan)
-      visualizationObjects.set(topic, laserScan)
+
+      // 验证必要字段
+      if (!ranges || !Array.isArray(ranges) || ranges.length === 0) {
+        console.error(`[LaserScan] 无效的激光雷达消息: ranges 字段无效`)
+        console.error(`[LaserScan] 消息内容:`, message)
+        return
+      }
+
+      if (angle_min === undefined || angle_max === undefined || angle_increment === undefined) {
+        console.error(`[LaserScan] 无效的激光雷达消息: 缺少角度信息`)
+        console.error(`[LaserScan] angle_min=${angle_min}, angle_max=${angle_max}, angle_increment=${angle_increment}`)
+        return
+      }
+
+      console.log(`[LaserScan] ✅ 消息验证通过，开始处理 ${ranges.length} 个激光点`)
+
+      removeVisualization(topic)
+
+      const geometry = new THREE.BufferGeometry()
+      const positions = []
+      const colors = []
+
+      try {
+        // 解析激光雷达数据
+        if (ranges && Array.isArray(ranges) && ranges.length > 0) {
+          const angleMin = angle_min || -Math.PI
+          const angleMax = angle_max || Math.PI
+          const angleIncrement = angle_increment || (angleMax - angleMin) / ranges.length
+          const rangeMin = range_min || 0.0
+          const rangeMax = range_max || 100.0
+
+          // 只在第一次更新时显示详细信息
+          if (!updateLaserScan._firstLogged) {
+            console.log(`LaserScan info: ${ranges.length} rays`)
+            console.log(`  - 角度范围: ${angleMin.toFixed(3)} 到 ${angleMax.toFixed(3)} 弧度`)
+            console.log(`  - 角度范围: ${(angleMin * 180 / Math.PI).toFixed(1)}° 到 ${(angleMax * 180 / Math.PI).toFixed(1)}°`)
+            console.log(`  - 角度增量: ${angleIncrement.toFixed(6)} 弧度 (${(angleIncrement * 180 / Math.PI).toFixed(3)}°)`)
+            console.log(`  - 距离范围: ${rangeMin} 到 ${rangeMax} 米`)
+            console.log(`  - 角度跨度: ${((angleMax - angleMin) * 180 / Math.PI).toFixed(1)}°`)
+
+            // 检查是否是完整的360度扫描
+            const totalAngle = angleMax - angleMin
+            if (Math.abs(totalAngle - 2 * Math.PI) < 0.1) {
+              console.log(`  - 这是360度全方位扫描`)
+            } else {
+              console.log(`  - 这是${(totalAngle * 180 / Math.PI).toFixed(1)}度扇形扫描`)
+            }
+
+            // 计算应该在90度、180度、270度的索引位置
+            const index90 = Math.round((Math.PI / 2 - angleMin) / angleIncrement)
+            const index180 = Math.round((Math.PI - angleMin) / angleIncrement)
+            const index270 = Math.round((3 * Math.PI / 2 - angleMin) / angleIncrement)
+            console.log(`  - 关键角度索引: 90°→${index90}, 180°→${index180}, 270°→${index270}`)
+
+            // 检查这些索引是否有有效数据
+            if (index90 >= 0 && index90 < ranges.length) {
+              const range90 = ranges[index90]
+              console.log(`  - 90度方向距离: ${range90} (${isFinite(range90) ? '有效' : '无效'})`)
+            }
+            if (index180 >= 0 && index180 < ranges.length) {
+              const range180 = ranges[index180]
+              console.log(`  - 180度方向距离: ${range180} (${isFinite(range180) ? '有效' : '无效'})`)
+            }
+          }
+
+          let validPoints = 0
+          let minX = Infinity, maxX = -Infinity
+          let minY = Infinity, maxY = -Infinity
+          for (let i = 0; i < ranges.length; i++) {
+            const angle = angleMin + i * angleIncrement
+            const range = ranges[i]
+
+            // 过滤有效距离值 - 完全按照flask_ros的标准
+            if (range >= rangeMin && range <= rangeMax && isFinite(range)) {
+              // 极坐标转笛卡尔坐标 - 完全按照flask_ros/map-2d.js的drawLaserScan实现
+              // 第730-736行的核心逻辑：
+              //
+              // const laserAngle = scan.angle_min + index * scan.angle_increment;
+              // const worldAngle = this.robotPose.theta + laserAngle;
+              // const endX = this.robotPose.x + range * Math.cos(worldAngle);
+              // const endY = this.robotPose.y + range * Math.sin(worldAngle);
+
+              // 激光雷达坐标转换 - 修复显示为一条线的问题
+              //
+              // 问题分析：显示为一条线说明角度计算有问题
+              // 让我直接使用标准的极坐标转换，不考虑机器人姿态
+
+              // 极坐标转笛卡尔坐标 - 参考flask_ros的实现
+              // 问题分析：可能需要考虑机器人朝向，但先尝试简单的角度偏移
+              //
+              // 检查是否需要角度偏移：如果激光雷达的0度不是正前方
+              // 尝试添加90度偏移，使角度分布更合理
+              const adjustedAngle = angle + Math.PI / 2  // 添加90度偏移
+
+              const x = range * Math.cos(adjustedAngle)
+              const y = range * Math.sin(adjustedAngle)
+              const z = 0
+
+              // 调试：打印关键角度的点
+              const angleDeg = angle * 180 / Math.PI
+              const adjustedAngleDeg = adjustedAngle * 180 / Math.PI
+              if (validPoints < 10 || Math.abs(angleDeg % 90) < 2) {
+                console.log(`[LaserScan] 点${validPoints}: 原始角度=${angleDeg.toFixed(1)}° (弧度${angle.toFixed(4)}), 调整后角度=${adjustedAngleDeg.toFixed(1)}°, 距离=${range.toFixed(2)}m, 坐标=(${x.toFixed(2)}, ${y.toFixed(2)})`)
+              }
+
+              positions.push(x, y, z)
+
+              // 更新边界框
+              minX = Math.min(minX, x)
+              maxX = Math.max(maxX, x)
+              minY = Math.min(minY, y)
+              maxY = Math.max(maxY, y)
+
+              // 调试：只在第一次更新时记录特定点的坐标
+              if (!updateLaserScan._firstLogged) {
+                // 记录0度、90度、180度、270度方向的点（如果有的话）
+                const angleDeg = angle * 180 / Math.PI
+                if (Math.abs(angleDeg % 90) < 2 || validPoints < 3) {  // 接近90度倍数或前3个点
+                  console.log(`[LaserScan] 点${validPoints}: 角度=${angleDeg.toFixed(1)}°, 距离=${range.toFixed(2)}m, 坐标=(${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`)
+                }
+              }
+
+              // 根据距离着色：近距离红色，远距离蓝色
+              const normalizedRange = (range - rangeMin) / (rangeMax - rangeMin)
+              const hue = (1 - normalizedRange) * 240 / 360  // 从红到蓝
+              const color = new THREE.Color().setHSL(hue, 0.8, 0.6)
+              colors.push(color.r, color.g, color.b)
+
+              validPoints++
+            }
+          }
+
+          console.log(`[LaserScan] 处理结果: ${validPoints}/${ranges.length} 有效点`)
+
+          // 只在第一次更新时显示边界框信息
+          if (!updateLaserScan._firstLogged && validPoints > 0) {
+            console.log(`[LaserScan] 点云边界框: X=[${minX.toFixed(2)}, ${maxX.toFixed(2)}], Y=[${minY.toFixed(2)}, ${maxY.toFixed(2)}]`)
+            console.log(`[LaserScan] 点云尺寸: ${(maxX - minX).toFixed(2)}m x ${(maxY - minY).toFixed(2)}m`)
+            console.log(`[LaserScan] X范围: ${(maxX - minX).toFixed(2)}m, Y范围: ${(maxY - minY).toFixed(2)}m`)
+
+            // 如果Y范围太小，说明有问题
+            if ((maxY - minY) < 1.0) {
+              console.warn(`[LaserScan] ⚠️ Y坐标范围太小 (${(maxY - minY).toFixed(2)}m)，可能存在解析问题`)
+            }
+          }
+
+          if (validPoints === 0) {
+            console.warn('[LaserScan] 没有找到有效的激光雷达点')
+            ElMessage.warning(`激光雷达 ${topic} 没有有效数据点`)
+
+            // 创建一个警告指示器
+            const warningGeometry = new THREE.SphereGeometry(0.1, 8, 8)
+            const warningMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 })
+            const warningSphere = new THREE.Mesh(warningGeometry, warningMaterial)
+            warningSphere.position.set(0, 0, 0.5)
+            warningSphere.userData = { topic, messageType: 'sensor_msgs/msg/LaserScan', warning: 'no_valid_points' }
+            scene.add(warningSphere)
+            visualizationObjects.set(topic, warningSphere)
+            return
+          }
+        } else {
+          console.error('[LaserScan] 无效的激光雷达消息格式')
+          console.error('[LaserScan] 消息内容:', message)
+          ElMessage.error(`激光雷达 ${topic} 消息格式无效`)
+          return
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+
+        const material = new THREE.PointsMaterial({
+          size: 0.1,  // 增大点的大小以便更好地看到
+          vertexColors: true,
+          sizeAttenuation: true
+        })
+
+        const laserScan = new THREE.Points(geometry, material)
+        laserScan.userData = {
+          topic,
+          messageType: 'sensor_msgs/msg/LaserScan',
+          pointCount: positions.length / 3
+        }
+
+        scene.add(laserScan)
+        visualizationObjects.set(topic, laserScan)
+
+        // 只在第一次成功时显示详细日志和消息
+        if (!updateLaserScan._firstLogged) {
+          console.log(`[LaserScan] 成功添加激光雷达点云: ${positions.length / 3} 个点`)
+          ElMessage.success(`激光雷达 ${topic} 显示成功: ${positions.length / 3} 个点`)
+          updateLaserScan._firstLogged = true
+        }
+
+      } catch (error) {
+        console.error('Error updating laser scan:', error)
+        ElMessage.error(`激光雷达更新失败: ${error.message}`)
+      }
     }
     
     const updateMarker = (topic, message) => {
@@ -922,129 +1326,212 @@ export default {
       visualizationObjects.set(topic, path)
     }
     
-    const updateOccupancyGrid = (topic, message) => {
-      // 栅格地图可视化实现
-      console.log(`Updating occupancy grid for ${topic}:`, message)
-      
+
+    const updateOdometry = (topic, message) => {
+      console.log(`Updating odometry for ${topic}:`, message)
+
       try {
         removeVisualization(topic)
-        
-        if (!message.data || !message.info) {
-          console.warn('Invalid occupancy grid message')
+
+        if (!message.pose || !message.pose.pose || !message.pose.pose.position) {
+          console.warn('Invalid odometry message format')
           return
         }
-        
-        const info = message.info
-        const width = info.width
-        const height = info.height
-        const resolution = info.resolution
-        const origin = info.origin.position
-        
-        // 创建地图纹理
-        const canvas = document.createElement('canvas')
-        const ctx = canvas.getContext('2d')
-        canvas.width = width
-        canvas.height = height
-        
-        const imageData = ctx.createImageData(width, height)
-        const data = imageData.data
-        
-        // 转换栅格数据到纹理
-        for (let i = 0; i < message.data.length; i++) {
-          const value = message.data[i]
-          const pixelIndex = i * 4
-          
-          if (value === -1) {
-            // 未知区域 - 灰色，半透明
-            data[pixelIndex] = 128     // R
-            data[pixelIndex + 1] = 128 // G
-            data[pixelIndex + 2] = 128 // B
-            data[pixelIndex + 3] = 128 // A
-          } else if (value === 0) {
-            // 自由空间 - 白色，几乎透明
-            data[pixelIndex] = 255     // R
-            data[pixelIndex + 1] = 255 // G
-            data[pixelIndex + 2] = 255 // B
-            data[pixelIndex + 3] = 50  // A
-          } else {
-            // 占用空间 - 黑色，不透明度基于值
-            const intensity = Math.min(value / 100 * 255, 255)
-            data[pixelIndex] = 0       // R
-            data[pixelIndex + 1] = 0   // G
-            data[pixelIndex + 2] = 0   // B
-            data[pixelIndex + 3] = intensity // A
+
+        const position = message.pose.pose.position
+        const orientation = message.pose.pose.orientation
+
+        // 创建位置指示器（箭头）
+        const arrowGeometry = new THREE.ConeGeometry(0.2, 1, 8)
+        const arrowMaterial = new THREE.MeshLambertMaterial({ color: 0x00ff00, transparent: true, opacity: 0.8 })
+        const arrow = new THREE.Mesh(arrowGeometry, arrowMaterial)
+
+        // 设置位置
+        arrow.position.set(position.x, position.y, position.z + 0.5) // 稍微抬高
+
+        // 设置方向（如果有方向信息）
+        if (orientation) {
+          arrow.quaternion.set(orientation.x, orientation.y, orientation.z, orientation.w)
+          // 调整箭头方向，使其指向正前方
+          arrow.rotateX(-Math.PI / 2)
+        }
+
+        // 创建轨迹线（如果是第一次或距离较远）
+        const currentPos = new THREE.Vector3(position.x, position.y, position.z)
+
+        // 只在位置变化超过阈值时添加轨迹点
+        if (trajectoryPoints.length === 0 ||
+            trajectoryPoints[trajectoryPoints.length - 1].distanceTo(currentPos) > 0.1) {
+          trajectoryPoints.push(currentPos.clone())
+
+          // 限制轨迹点数量
+          if (trajectoryPoints.length > 1000) {
+            trajectoryPoints.shift()
           }
         }
-        
-        ctx.putImageData(imageData, 0, 0)
-        
-        // 创建Three.js纹理
-        const texture = new THREE.CanvasTexture(canvas)
-        texture.flipY = false
-        texture.wrapS = THREE.ClampToEdgeWrapping
-        texture.wrapT = THREE.ClampToEdgeWrapping
-        
-        // 创建地图几何体 - 使用平面几何体
-        const geometry = new THREE.PlaneGeometry(
-          width * resolution,
-          height * resolution
-        )
-        
-        // 创建材质
-        const material = new THREE.MeshBasicMaterial({
-          map: texture,
-          transparent: true,
-          opacity: 0.8,
-          side: THREE.DoubleSide
-        })
-        
-        // 创建网格
-        const mapMesh = new THREE.Mesh(geometry, material)
-        
-        // 设置位置 - 地图平铺在XY平面上
-        mapMesh.position.set(
-          origin.x + (width * resolution) / 2,
-          origin.y + (height * resolution) / 2,
-          0.01 // 稍微抬升避免z-fighting
-        )
-        
-        // 旋转使其水平放置
-        mapMesh.rotation.x = 0
-        mapMesh.rotation.y = 0
-        mapMesh.rotation.z = 0
-        
-        mapMesh.userData = { 
-          topic, 
-          messageType: 'nav_msgs/msg/OccupancyGrid',
-          mapInfo: info
+
+        // 创建轨迹线
+        if (trajectoryPoints.length > 1) {
+          const trajectoryGeometry = new THREE.BufferGeometry().setFromPoints(trajectoryPoints)
+          const trajectoryMaterial = new THREE.LineBasicMaterial({
+            color: 0x0088ff,
+            transparent: true,
+            opacity: 0.6,
+            linewidth: 2
+          })
+          const trajectoryLine = new THREE.Line(trajectoryGeometry, trajectoryMaterial)
+
+          const group = new THREE.Group()
+          group.add(arrow)
+          group.add(trajectoryLine)
+
+          group.userData = {
+            topic,
+            messageType: 'nav_msgs/msg/Odometry',
+            position: { x: position.x, y: position.y, z: position.z },
+            trajectoryLength: trajectoryPoints.length
+          }
+
+          scene.add(group)
+          visualizationObjects.set(topic, group)
+        } else {
+          // 只有箭头
+          arrow.userData = { topic, messageType: 'nav_msgs/msg/Odometry' }
+          scene.add(arrow)
+          visualizationObjects.set(topic, arrow)
         }
-        
-        scene.add(mapMesh)
-        visualizationObjects.set(topic, mapMesh)
-        
-        // 存储地图引用
-        if (topic === '/map') {
-          mapMesh.value = mapMesh
-          mapTexture.value = texture
-        }
-        
-        console.log(`Added occupancy grid map: ${width}x${height}, resolution: ${resolution}m/pixel`)
-        
+
+        console.log(`Successfully updated odometry at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`)
+
       } catch (error) {
-        console.error('Error updating occupancy grid:', error)
-        
-        // 创建错误指示器
-        const geometry = new THREE.BoxGeometry(2, 2, 0.1)
-        const material = new THREE.MeshBasicMaterial({ color: 0xff0000 })
-        const errorBox = new THREE.Mesh(geometry, material)
-        errorBox.userData = { topic, error: true }
-        errorBox.position.set(0, 0, 0.05)
-        
-        scene.add(errorBox)
-        visualizationObjects.set(topic, errorBox)
+        console.error('Error updating odometry:', error)
       }
     }
-    
+
+    const updatePoseStamped = (topic, message) => {
+      console.log(`Updating pose stamped for ${topic}:`, message)
+
+      try {
+        removeVisualization(topic)
+
+        if (!message.pose || !message.pose.position) {
+          console.warn('Invalid pose stamped message format')
+          return
+        }
+
+        const position = message.pose.position
+        const orientation = message.pose.orientation
+
+        // 创建位置指示器（坐标轴）
+        const axesHelper = new THREE.AxesHelper(1)
+        axesHelper.position.set(position.x, position.y, position.z)
+
+        if (orientation) {
+          axesHelper.quaternion.set(orientation.x, orientation.y, orientation.z, orientation.w)
+        }
+
+        axesHelper.userData = {
+          topic,
+          messageType: 'geometry_msgs/msg/PoseStamped',
+          position: { x: position.x, y: position.y, z: position.z }
+        }
+
+        scene.add(axesHelper)
+        visualizationObjects.set(topic, axesHelper)
+
+        console.log(`Successfully updated pose at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`)
+
+      } catch (error) {
+        console.error('Error updating pose stamped:', error)
+      }
+    }
+
+    const updatePoseWithCovarianceStamped = (topic, message) => {
+      console.log(`Updating pose with covariance for ${topic}:`, message)
+
+      try {
+        removeVisualization(topic)
+
+        if (!message.pose || !message.pose.pose || !message.pose.pose.position) {
+          console.warn('Invalid pose with covariance message format')
+          return
+        }
+
+        const position = message.pose.pose.position
+        const orientation = message.pose.pose.orientation
+        const covariance = message.pose.covariance
+
+        // 创建位置指示器
+        const axesHelper = new THREE.AxesHelper(1)
+        axesHelper.position.set(position.x, position.y, position.z)
+
+        if (orientation) {
+          axesHelper.quaternion.set(orientation.x, orientation.y, orientation.z, orientation.w)
+        }
+
+        // 创建协方差椭圆（显示不确定性）
+        let uncertaintyEllipse = null
+        if (covariance && covariance.length >= 36) {
+          // 提取XY平面的协方差
+          const cov_xx = covariance[0]   // 第1行第1列
+          const cov_yy = covariance[7]   // 第2行第2列
+          const cov_xy = covariance[1]   // 第1行第2列
+
+          // 计算椭圆参数
+          const trace = cov_xx + cov_yy
+          const det = cov_xx * cov_yy - cov_xy * cov_xy
+
+          if (det > 0 && trace > 0) {
+            const lambda1 = (trace + Math.sqrt(trace * trace - 4 * det)) / 2
+            const lambda2 = (trace - Math.sqrt(trace * trace - 4 * det)) / 2
+
+            const a = Math.sqrt(Math.abs(lambda1)) * 2  // 95%置信间隔
+            const b = Math.sqrt(Math.abs(lambda2)) * 2
+
+            // 创建椭圆几何体
+            const ellipseGeometry = new THREE.RingGeometry(0, Math.max(a, b), 32)
+            const ellipseMaterial = new THREE.MeshBasicMaterial({
+              color: 0xff0000,
+              transparent: true,
+              opacity: 0.3,
+              side: THREE.DoubleSide
+            })
+            uncertaintyEllipse = new THREE.Mesh(ellipseGeometry, ellipseMaterial)
+            uncertaintyEllipse.position.set(position.x, position.y, position.z + 0.01)
+            uncertaintyEllipse.scale.set(a/Math.max(a,b), b/Math.max(a,b), 1)
+
+            // 旋转椭圆到正确方向
+            if (cov_xy !== 0) {
+              const angle = 0.5 * Math.atan2(2 * cov_xy, cov_xx - cov_yy)
+              uncertaintyEllipse.rotateZ(angle)
+            }
+          }
+        }
+
+        // 组合所有元素
+        const group = new THREE.Group()
+        group.add(axesHelper)
+        if (uncertaintyEllipse) {
+          group.add(uncertaintyEllipse)
+        }
+
+        group.userData = {
+          topic,
+          messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped',
+          position: { x: position.x, y: position.y, z: position.z },
+          hasCovariance: uncertaintyEllipse !== null
+        }
+
+        scene.add(group)
+        visualizationObjects.set(topic, group)
+
+        console.log(`Successfully updated pose with covariance at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`)
+
+      } catch (error) {
+        console.error('Error updating pose with covariance:', error)
+      }
+    }
+
     // 生命周期
     onMounted(async () => {
       console.log('Scene3D component mounted')
@@ -1178,23 +1665,29 @@ export default {
       
       switch (preset) {
         case 'top':
-          // 俯视图
+          // 俯视图 - 从正上方看XY平面
           camera.position.set(0, 0, 20)
           camera.lookAt(target)
           break
-          
+
         case 'side':
-          // 侧视图
+          // 侧视图 - 从Y轴侧面看XZ平面
+          camera.position.set(0, -20, 5)
+          camera.lookAt(target)
+          break
+
+        case 'front':
+          // 前视图 - 从X轴前方看YZ平面
           camera.position.set(20, 0, 5)
           camera.lookAt(target)
           break
-          
+
         case 'iso':
-          // 等距图
-          camera.position.set(15, 15, 15)
+          // 等距图 - 从斜上方看，与RViz类似的默认视角
+          camera.position.set(10, 10, 10)
           camera.lookAt(target)
           break
-          
+
         default:
           resetCamera()
       }
@@ -1584,7 +2077,7 @@ export default {
         
         // 创建Three.js纹理
         const texture = new THREE.CanvasTexture(canvas)
-        texture.flipY = false
+        texture.flipY = false  // 不翻转Y轴，因为我们已经在位置计算中处理了坐标系转换
         texture.wrapS = THREE.ClampToEdgeWrapping
         texture.wrapT = THREE.ClampToEdgeWrapping
         
@@ -1609,18 +2102,80 @@ export default {
         
         console.log(`[Scene3D] 地图物理尺寸: ${mapWidthMeters.toFixed(2)}m x ${mapHeightMeters.toFixed(2)}m`)
         
-        // 设置地图位置 - 确保在XY平面正确放置
-        // YAML配置中的origin是地图左下角的位置
-        const mapX = mapConfig.origin[0] + mapWidthMeters / 2   // 地图中心X
-        const mapY = mapConfig.origin[1] + mapHeightMeters / 2  // 地图中心Y
-        const mapZ = 0.01  // 稍微抬升避免与网格重叠
-        
+        // 地图位置计算 - 正确应用YAML origin偏移
+        //
+        // ROS地图约定：
+        // - origin是地图像素(0,0)对应的世界坐标，即地图左下角在世界坐标系中的位置
+        // - 我们需要让地图的几何中心移动到正确位置，使得坐标原点(0,0)在地图中的正确位置
+        //
+        // Three.js PlaneGeometry的几何中心默认在原点(0,0,0)
+        // 地图左下角应该在世界坐标origin，所以地图中心应该在：
+        // mapCenter = origin + (mapSize / 2)
+
+        const mapWidthWorld = width * mapConfig.resolution
+        const mapHeightWorld = height * mapConfig.resolution
+
+        // 地图几何中心的世界坐标位置
+        // ROS坐标系：X向前(北)，Y向左(西)
+        // Three.js坐标系：X向右，Y向上
+        // 需要正确处理坐标系转换和origin偏移
+
+        // 确保坐标原点(0,0)在地图中正确显示
+        // 如果origin=[-10, -5]，表示地图左下角在世界坐标(-10, -5)
+        // 地图中心应该在origin + mapSize/2
+        const mapX = mapConfig.origin[0] + mapWidthWorld / 2
+        const mapY = mapConfig.origin[1] + mapHeightWorld / 2
+        const mapZ = mapConfig.origin[2] || 0.0
+
+        // 验证坐标原点在地图中的位置
+        // 坐标原点(0,0)相对于地图左下角的偏移
+        const originInMapX = 0 - mapConfig.origin[0]  // 原点X - 地图左下角X
+        const originInMapY = 0 - mapConfig.origin[1]  // 原点Y - 地图左下角Y
+
+        console.log(`[Scene3D] 坐标原点(0,0)在地图中的位置检查:`)
+        console.log(`[Scene3D] - 原点相对于地图左下角偏移: (${originInMapX.toFixed(2)}, ${originInMapY.toFixed(2)}) 米`)
+        console.log(`[Scene3D] - 原点在地图中的百分比位置: (${(originInMapX/mapWidthWorld*100).toFixed(1)}%, ${(originInMapY/mapHeightWorld*100).toFixed(1)}%)`)
+
+        // 如果原点不在地图范围内，给出警告
+        if (originInMapX < 0 || originInMapX > mapWidthWorld || originInMapY < 0 || originInMapY > mapHeightWorld) {
+          console.warn(`[Scene3D] ⚠️ 坐标原点(0,0)在地图范围外！`)
+        }
+
+        console.log(`[Scene3D] 地图世界坐标计算:`)
+        console.log(`[Scene3D] - 地图物理尺寸: ${mapWidthWorld.toFixed(2)}m × ${mapHeightWorld.toFixed(2)}m`)
+        console.log(`[Scene3D] - YAML origin: [${mapConfig.origin.join(', ')}]`)
+        console.log(`[Scene3D] - 计算的地图中心位置: (${mapX.toFixed(3)}, ${mapY.toFixed(3)}, ${mapZ.toFixed(3)})`)
+
+        // 计算坐标原点(0,0)在地图中的相对位置
+        const originOffsetX = -mapConfig.origin[0] / mapWidthWorld
+        const originOffsetY = -mapConfig.origin[1] / mapHeightWorld
+        console.log(`[Scene3D] - 坐标原点(0,0)在地图中的相对位置: (${(originOffsetX*100).toFixed(1)}%, ${(originOffsetY*100).toFixed(1)}%)`)
+
         mapMesh.position.set(mapX, mapY, mapZ)
-        
-        // 确保地图正确朝向（地图应该水平放置在XY平面）
-        mapMesh.rotation.x = -Math.PI / 2  // 绕X轴旋转90度，使地图平躺在XY平面
+
+        // 地图旋转 - 测试不同的旋转方案
+        // 问题：地图显示悬浮且与坐标系不匹配
+        // Three.js的PlaneGeometry默认在XY平面，法线指向+Z
+        // 如果地图悬浮，可能是旋转导致的
+
+        // 方案1：不旋转，直接在XY平面
+        mapMesh.rotation.x = 0
         mapMesh.rotation.y = 0
         mapMesh.rotation.z = 0
+
+        console.log(`[Scene3D] ✅ 地图加载完成:`)
+        console.log(`[Scene3D] - 几何中心位置: (${mapX.toFixed(3)}, ${mapY.toFixed(3)}, ${mapZ.toFixed(3)})`)
+        console.log(`[Scene3D] - 原点配置: [${mapConfig.origin.join(', ')}]`)
+        console.log(`[Scene3D] - 物理尺寸: ${mapWidthMeters.toFixed(2)}m × ${mapHeightMeters.toFixed(2)}m`)
+        console.log(`[Scene3D] - 分辨率: ${mapConfig.resolution}m/pixel`)
+        console.log(`[Scene3D] - 像素尺寸: ${width} × ${height}`)
+
+        // 计算地图在世界坐标系中的实际覆盖范围
+        const worldMinX = mapConfig.origin[0]
+        const worldMinY = mapConfig.origin[1]
+        const worldMaxX = mapConfig.origin[0] + width * mapConfig.resolution
+        const worldMaxY = mapConfig.origin[1] + height * mapConfig.resolution
+        console.log(`[Scene3D] - 世界坐标覆盖范围: X=[${worldMinX.toFixed(2)}, ${worldMaxX.toFixed(2)}], Y=[${worldMinY.toFixed(2)}, ${worldMaxY.toFixed(2)}]`)
         
         // 设置用户数据
         mapMesh.userData = {
@@ -1919,7 +2474,14 @@ export default {
       fitCameraToPointCloud,
       fitCameraToMap,
       addDebugInfo,
-      checkSubscriptionStatus
+      checkSubscriptionStatus,
+      // 位置信息处理
+      updateOdometry,
+      updatePoseStamped,
+      updatePoseWithCovarianceStamped,
+      // 清理方法
+      clearAllVisualizations,
+      unsubscribeAllTopics
     }
   }
 }
