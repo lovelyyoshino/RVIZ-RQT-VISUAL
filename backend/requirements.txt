@@ -1,0 +1,31 @@
+# Web 框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# WebSocket 支持  
+websockets==12.0
+
+# 数据验证
+pydantic-settings==2.5.0
+
+# 其他依赖
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+python-dotenv==1.0.0
+aiofiles==23.2.1
+
+# 数据处理
+numpy>=1.21.0
+
+# 开发工具
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.11.0
+isort==5.12.0
+flake8==6.1.0
+
+# 系统监控 (可选)
+psutil==5.9.0
+
+# 日志增强
+colorlog==6.7.0
