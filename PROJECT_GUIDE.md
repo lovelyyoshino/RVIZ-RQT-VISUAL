@@ -111,12 +111,15 @@ ros-web-viz/
 - `visualization_msgs/msg/MarkerArray` - 标记数组
 - `nav_msgs/msg/Path` - 路径数据
 - `geometry_msgs/msg/Twist` - 速度命令
+- `geometry_msgs/msg/PoseStamped` - 2D 目标点（/goal_pose）
+- `geometry_msgs/msg/PoseWithCovarianceStamped` - 2D 位置估计（/initialpose）
 
 **可视化功能**:
 - 🎮 相机控制 (轨道、缩放、平移)
 - 🎨 场景配置 (背景、网格、坐标轴)
 - 📊 性能监控 (FPS、对象数、顶点数)
 - 🔧 渲染设置 (阴影、抗锯齿、点大小)
+ - 🧭 轨迹显示（轨迹长度 10–100 可调）
 
 ### 2. 插件系统
 
@@ -139,6 +142,8 @@ ros-web-viz/
 - 📤 消息发布
 - 📋 主题/节点列表获取
 - 🔗 自动重连机制
+ - 📨 Rosbridge 协议：后端已实现 `advertise/unadvertise/publish`
+ - QoS：`/goal_pose`、`/initialpose` 使用 `TRANSIENT_LOCAL`（先发后订）
 
 ## 🛠️ 开发指南
 
@@ -300,6 +305,7 @@ docker-compose -f docker-compose.test.yml up
 ```
 
 ## 📝 API 文档
+更多面向“使用者”的运行与操作截图，请参考根目录 `README.md`。
 
 启动服务后访问: http://localhost:8000/docs
 
