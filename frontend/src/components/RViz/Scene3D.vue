@@ -1,9 +1,11 @@
 <template>
-  <div 
-    ref="containerRef" 
+  <div
+    ref="containerRef"
     class="scene3d-container"
     tabindex="0"
     @mousedown="onMouseDown"
+    @mousemove="onMouseMove"
+    @mouseup="onMouseUp"
     @contextmenu.prevent
   >
     <!-- 加载指示器 -->
@@ -28,12 +30,14 @@ import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import * as THREE from 'three'
 import { ElMessage } from 'element-plus'
 import { useRosbridge } from '../../composables/useRosbridge'
+import { useConnectionStore } from '../../composables/useConnectionStore'
 
 export default {
   name: 'Scene3D',
   emits: ['object-selected', 'camera-moved'],
   setup(props, { emit }) {
     const rosbridge = useRosbridge()
+    const connectionStore = useConnectionStore()
     const containerRef = ref(null)
     const loading = ref(true)
     
@@ -82,9 +86,7 @@ export default {
         showOrigin: true
       },
       position: {
-        showRobotPose: true,
         showTrajectory: true,
-        showCoordinateFrame: true,
         trajectoryLength: 100
       }
     }
@@ -95,7 +97,14 @@ export default {
 
     // 轨迹记录（用于里程计）
     let trajectoryPoints = []
-    
+
+    // 导航工具状态
+    let currentNavigationTool = 'none'
+    let isDragging = false
+    let dragStartPosition = null
+    let dragCurrentPosition = null
+    let previewArrow = null
+
     // FPS 计算
     let lastTime = 0
     let frameCount = 0
@@ -335,7 +344,50 @@ export default {
         }
 
         robotModel.userData.lastUpdate = Date.now()
-        console.log(`机器人位置更新: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`)
+        console.log(`[updateRobotPosition] 机器人位置更新: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`)
+
+        // 创建轨迹点（基于机器人位置更新）
+        if (persistentSettings.position.showTrajectory) {
+          const currentPos = new THREE.Vector3(x, y, z)
+
+          // 只在位置变化超过阈值时添加轨迹点
+          if (trajectoryPoints.length === 0 ||
+              trajectoryPoints[trajectoryPoints.length - 1].distanceTo(currentPos) > 0.1) {
+            trajectoryPoints.push(currentPos.clone())
+            console.log(`[Trajectory-Robot] 添加轨迹点 #${trajectoryPoints.length}: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`)
+
+            // 限制轨迹点数量
+            if (trajectoryPoints.length > 1000) {
+              trajectoryPoints.shift()
+              console.log(`[Trajectory-Robot] 轨迹点数量达到上限，移除最早的点`)
+            }
+
+            // 创建或更新轨迹线
+            if (trajectoryPoints.length > 1) {
+              // 清除之前的独立轨迹线
+              const existingTrajectory = scene.children.find(child => child.userData?.type === 'global_trajectory')
+              if (existingTrajectory) {
+                scene.remove(existingTrajectory)
+                existingTrajectory.geometry?.dispose()
+                existingTrajectory.material?.dispose()
+              }
+
+              // 创建新的全局轨迹线
+              const globalTrajectoryGeometry = new THREE.BufferGeometry().setFromPoints(trajectoryPoints)
+              const globalTrajectoryMaterial = new THREE.LineBasicMaterial({
+                color: 0xff0000,  // 红色全局轨迹
+                transparent: false,
+                linewidth: 6
+              })
+              const globalTrajectoryLine = new THREE.Line(globalTrajectoryGeometry, globalTrajectoryMaterial)
+              globalTrajectoryLine.userData = { type: 'global_trajectory' }
+              globalTrajectoryLine.visible = true
+
+              scene.add(globalTrajectoryLine)
+              console.log(`[Trajectory-Robot] 创建全局轨迹线，点数: ${trajectoryPoints.length}`)
+            }
+          }
+        }
 
       } catch (error) {
         console.warn('更新机器人位置失败:', error)
@@ -494,14 +546,31 @@ export default {
         // 射线检测
         const raycaster = new THREE.Raycaster()
         const mouse = new THREE.Vector2()
-        
+
         const rect = containerRef.value.getBoundingClientRect()
         mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
         mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
-        
+
         raycaster.setFromCamera(mouse, camera)
+
+        // 检查是否使用导航工具
+        if (currentNavigationTool !== 'none') {
+          // 与地面相交检测（假设地面在z=0平面）
+          const groundPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0)
+          const intersection = new THREE.Vector3()
+          if (raycaster.ray.intersectPlane(groundPlane, intersection)) {
+            // 开始拖拽以设置方向
+            isDragging = true
+            dragStartPosition = intersection.clone()
+            dragCurrentPosition = intersection.clone()
+            event.preventDefault()
+          }
+          return
+        }
+
+        // 正常的对象选择检测
         const intersects = raycaster.intersectObjects(scene.children, true)
-        
+
         if (intersects.length > 0) {
           const object = intersects[0].object
           emit('object-selected', {
@@ -510,6 +579,91 @@ export default {
             distance: intersects[0].distance
           })
         }
+      }
+    }
+
+    /**
+     * 鼠标移动事件
+     */
+    const onMouseMove = (event) => {
+      if (isDragging && currentNavigationTool !== 'none') {
+        event.preventDefault()
+
+        const raycaster = new THREE.Raycaster()
+        const mouse = new THREE.Vector2()
+
+        const rect = containerRef.value.getBoundingClientRect()
+        mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
+        mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
+
+        raycaster.setFromCamera(mouse, camera)
+
+        const groundPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0)
+        const intersection = new THREE.Vector3()
+        if (raycaster.ray.intersectPlane(groundPlane, intersection)) {
+          dragCurrentPosition = intersection.clone()
+
+          // 计算方向并更新预览箭头
+          if (dragStartPosition) {
+            const direction = new THREE.Vector2(
+              dragCurrentPosition.x - dragStartPosition.x,
+              dragCurrentPosition.y - dragStartPosition.y
+            )
+
+            // 只有在拖拽了足够距离时才显示箭头
+            if (direction.length() > 0.1) {
+              if (!previewArrow) {
+                createPreviewArrow(dragStartPosition, direction)
+              } else {
+                updatePreviewArrow(dragStartPosition, direction)
+              }
+            }
+          }
+        }
+      }
+    }
+
+    /**
+     * 鼠标释放事件
+     */
+    const onMouseUp = (event) => {
+      if (isDragging && currentNavigationTool !== 'none') {
+        isDragging = false
+
+        // 清除预览箭头
+        clearPreviewArrow()
+
+        if (dragStartPosition && dragCurrentPosition) {
+          // 计算方向
+          const direction = new THREE.Vector2(
+            dragCurrentPosition.x - dragStartPosition.x,
+            dragCurrentPosition.y - dragStartPosition.y
+          )
+
+          // 只有在拖拽了足够距离时才发布消息
+          if (direction.length() > 0.1) {
+            // 计算角度（从拖拽方向）
+            const yaw = Math.atan2(direction.y, direction.x)
+
+            // 创建四元数
+            const orientation = new THREE.Quaternion()
+            orientation.setFromAxisAngle(new THREE.Vector3(0, 0, 1), yaw)
+
+            // 发布导航消息
+            handleNavigationToolClick(dragStartPosition, {
+              x: orientation.x,
+              y: orientation.y,
+              z: orientation.z,
+              w: orientation.w
+            })
+          } else {
+            // 如果拖拽距离太短，使用默认方向
+            handleNavigationToolClick(dragStartPosition, { x: 0, y: 0, z: 0, w: 1 })
+          }
+        }
+
+        dragStartPosition = null
+        dragCurrentPosition = null
       }
     }
     
@@ -830,7 +984,15 @@ export default {
             break
           case 'nav_msgs/msg/Odometry':
           case 'nav_msgs/Odometry':
-            console.log(`[Scene3D] 🔄 处理里程计消息...`)
+            console.log(`[Scene3D] 🔄 准备处理里程计消息，主题: ${topic}`)
+            console.log(`[Scene3D] 🔄 里程计消息内容预览:`, {
+              topic,
+              hasMessage: !!message,
+              hasHeader: !!message?.header,
+              hasPose: !!message?.pose,
+              hasPosePose: !!message?.pose?.pose,
+              hasPosition: !!message?.pose?.pose?.position
+            })
             updateOdometry(topic, message)
             break
           case 'geometry_msgs/msg/PoseStamped':
@@ -1619,7 +1781,8 @@ export default {
     
 
     const updateOdometry = (topic, message) => {
-      console.log(`Updating odometry for ${topic}:`, message)
+      console.log(`[updateOdometry] ⚙️ 开始处理里程计消息 - 主题: ${topic}`)
+      console.log(`[updateOdometry] 消息内容:`, message)
 
       try {
         removeVisualization(topic)
@@ -1657,6 +1820,7 @@ export default {
         if (trajectoryPoints.length === 0 ||
             trajectoryPoints[trajectoryPoints.length - 1].distanceTo(currentPos) > 0.1) {
           trajectoryPoints.push(currentPos.clone())
+          console.log(`[Trajectory] 添加轨迹点 #${trajectoryPoints.length}: (${currentPos.x.toFixed(2)}, ${currentPos.y.toFixed(2)}, ${currentPos.z.toFixed(2)})`)
 
           // 限制轨迹点数量
           if (trajectoryPoints.length > 1000) {
@@ -1668,17 +1832,49 @@ export default {
         if (trajectoryPoints.length > 1) {
           const trajectoryGeometry = new THREE.BufferGeometry().setFromPoints(trajectoryPoints)
           const trajectoryMaterial = new THREE.LineBasicMaterial({
-            color: 0x0088ff,
-            transparent: true,
-            opacity: 0.6,
-            linewidth: 2
+            color: 0xff0000,  // 改为红色便于识别
+            transparent: false, // 不透明
+            linewidth: 5      // 更大的线宽
           })
           const trajectoryLine = new THREE.Line(trajectoryGeometry, trajectoryMaterial)
           trajectoryLine.userData = { type: 'trajectory' }  // 添加类型标识
 
+          // 强制轨迹可见用于调试
+          trajectoryLine.visible = true
+
+          // 详细调试信息
+          console.log(`[Trajectory] 创建轨迹线详细信息:`)
+          console.log(`  - 点数: ${trajectoryPoints.length}`)
+          console.log(`  - 几何体顶点数: ${trajectoryGeometry.attributes.position.count}`)
+          console.log(`  - 可见性: ${trajectoryLine.visible}`)
+          console.log(`  - 设置中的显示轨迹: ${persistentSettings.position.showTrajectory}`)
+          console.log(`  - 材质颜色: 0x${trajectoryMaterial.color.getHex().toString(16)}`)
+          console.log(`  - 轨迹点坐标:`, trajectoryPoints.map(p => `(${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`))
+
           const group = new THREE.Group()
           group.add(arrow)
           group.add(trajectoryLine)
+
+          // 确保整个组可见
+          group.visible = true
+
+          console.log(`[Trajectory] 组对象信息:`)
+          console.log(`  - 组可见性: ${group.visible}`)
+          console.log(`  - 组内对象数: ${group.children.length}`)
+          console.log(`  - 轨迹线在组中: ${group.children.includes(trajectoryLine)}`)
+          console.log(`  - 场景添加前场景对象数: ${scene.children.length}`)
+
+          // 额外创建一个独立的轨迹线直接添加到场景，用于调试
+          const debugTrajectoryGeometry = new THREE.BufferGeometry().setFromPoints(trajectoryPoints)
+          const debugTrajectoryMaterial = new THREE.LineBasicMaterial({
+            color: 0x00ff00,  // 绿色调试轨迹
+            transparent: false,
+            linewidth: 8
+          })
+          const debugTrajectoryLine = new THREE.Line(debugTrajectoryGeometry, debugTrajectoryMaterial)
+          debugTrajectoryLine.position.set(0, 0, 1) // 稍微抬高避免重叠
+          scene.add(debugTrajectoryLine)
+          console.log(`[Trajectory] 添加了独立的绿色调试轨迹线到场景，位置: (0,0,1)`)
 
           group.userData = {
             topic,
@@ -1831,15 +2027,67 @@ export default {
       }
     }
 
+    // 消息验证相关变量
+    let verificationSubscriptions = new Map()
+
+    // 启动消息验证
+    const startMessageVerification = () => {
+      console.log('[Verification] 启动消息验证系统')
+
+      // 验证/goal_pose话题
+      try {
+        const goalPoseVerification = rosbridge.subscribe('/goal_pose', 'geometry_msgs/msg/PoseStamped', (message) => {
+          console.log('[Verification] ✅ 收到/goal_pose消息:', message)
+          ElMessage.success('验证成功：收到发布的目标点消息')
+        })
+
+        if (goalPoseVerification) {
+          verificationSubscriptions.set('/goal_pose', goalPoseVerification)
+          console.log('[Verification] ✅ 成功订阅/goal_pose用于验证')
+        }
+      } catch (error) {
+        console.error('[Verification] 订阅/goal_pose失败:', error)
+      }
+
+      // 验证/initialpose话题
+      try {
+        const initialPoseVerification = rosbridge.subscribe('/initialpose', 'geometry_msgs/msg/PoseWithCovarianceStamped', (message) => {
+          console.log('[Verification] ✅ 收到/initialpose消息:', message)
+          ElMessage.success('验证成功：收到发布的位置估计消息')
+        })
+
+        if (initialPoseVerification) {
+          verificationSubscriptions.set('/initialpose', initialPoseVerification)
+          console.log('[Verification] ✅ 成功订阅/initialpose用于验证')
+        }
+      } catch (error) {
+        console.error('[Verification] 订阅/initialpose失败:', error)
+      }
+    }
+
+    // 停止消息验证
+    const stopMessageVerification = () => {
+      console.log('[Verification] 停止消息验证系统')
+      verificationSubscriptions.forEach((subscription, topic) => {
+        try {
+          rosbridge.unsubscribe(subscription)
+          console.log(`[Verification] 取消订阅验证话题: ${topic}`)
+        } catch (error) {
+          console.error(`[Verification] 取消订阅${topic}失败:`, error)
+        }
+      })
+      verificationSubscriptions.clear()
+    }
+
     // 生命周期
     onMounted(async () => {
       console.log('Scene3D component mounted')
       await nextTick()
-      
+
       if (containerRef.value) {
         console.log('Container found, initializing scene...')
         console.log('Container size:', containerRef.value.clientWidth, 'x', containerRef.value.clientHeight)
-        
+
         // 确保容器有尺寸后再初始化
         if (containerRef.value.clientWidth > 0 && containerRef.value.clientHeight > 0) {
           await initScene()
@@ -1854,6 +2102,27 @@ export default {
       } else {
         console.error('Container not found!')
       }
+
+      // 检查ROS连接状态并启动验证
+      if (rosbridge.isConnected) {
+        console.log('[Scene3D] ROS已连接，启动消息验证')
+        startMessageVerification()
+      } else {
+        console.log('[Scene3D] ROS未连接，等待连接后启动验证')
+        // 定期检查连接状态
+        const connectionCheckInterval = setInterval(() => {
+          if (rosbridge.isConnected) {
+            console.log('[Scene3D] ROS连接成功，启动消息验证')
+            startMessageVerification()
+            clearInterval(connectionCheckInterval)
+          }
+        }, 1000)
+
+        // 1分钟后停止检查
+        setTimeout(() => {
+          clearInterval(connectionCheckInterval)
+        }, 60000)
+      }
     })
     
     onUnmounted(() => {
@@ -1861,6 +2130,9 @@ export default {
       if (animationId) {
         cancelAnimationFrame(animationId)
       }
+
+      // 停止消息验证
+      stopMessageVerification()
       
       window.removeEventListener('resize', onWindowResize)
       window.removeEventListener('keydown', onKeyDown)
@@ -1929,6 +2201,236 @@ export default {
         trajectoryPoints.splice(0, trajectoryPoints.length - newLength)
         // 重新创建轨迹线
         updateRobotTrajectory()
+      }
+    }
+
+    // 导航工具相关方法
+    const setNavigationTool = (tool) => {
+      currentNavigationTool = tool
+      console.log('设置导航工具:', tool)
+
+      // 清除之前的预览箭头
+      clearPreviewArrow()
+
+      // 更改鼠标样式
+      if (containerRef.value) {
+        switch (tool) {
+          case '2d_goal':
+            containerRef.value.style.cursor = 'crosshair'
+            break
+          case '2d_pose':
+            containerRef.value.style.cursor = 'copy'
+            break
+          default:
+            containerRef.value.style.cursor = 'default'
+        }
+      }
+    }
+
+    const createPreviewArrow = (position, direction) => {
+      // 清除之前的箭头
+      clearPreviewArrow()
+
+      // 创建箭头几何体
+      const arrowGeometry = new THREE.ConeGeometry(0.1, 0.3, 8)
+      const arrowMaterial = new THREE.MeshBasicMaterial({
+        color: currentNavigationTool === '2d_goal' ? 0xff6b35 : 0x4dabf7,
+        transparent: true,
+        opacity: 0.8
+      })
+
+      const arrowHead = new THREE.Mesh(arrowGeometry, arrowMaterial)
+
+      // 创建箭头杆
+      const shaftGeometry = new THREE.CylinderGeometry(0.02, 0.02, 0.4, 8)
+      const shaft = new THREE.Mesh(shaftGeometry, arrowMaterial)
+
+      // 组合箭头
+      previewArrow = new THREE.Group()
+      shaft.position.set(0, -0.2, 0)
+      arrowHead.position.set(0, 0, 0)
+      previewArrow.add(shaft)
+      previewArrow.add(arrowHead)
+
+      // 设置位置和方向
+      previewArrow.position.copy(position)
+      const angle = Math.atan2(direction.y, direction.x)
+      previewArrow.rotation.z = angle - Math.PI / 2 // 调整箭头指向
+
+      scene.add(previewArrow)
+    }
+
+    const updatePreviewArrow = (position, direction) => {
+      if (previewArrow) {
+        previewArrow.position.copy(position)
+        const angle = Math.atan2(direction.y, direction.x)
+        previewArrow.rotation.z = angle - Math.PI / 2
+      }
+    }
+
+    const clearPreviewArrow = () => {
+      if (previewArrow) {
+        scene.remove(previewArrow)
+        previewArrow.children.forEach(child => {
+          if (child.geometry) child.geometry.dispose()
+          if (child.material) child.material.dispose()
+        })
+        previewArrow = null
+      }
+    }
+
+    const handleNavigationToolClick = (position, orientation) => {
+      switch (currentNavigationTool) {
+        case '2d_goal':
+          publishGoalPose(position, orientation)
+          break
+        case '2d_pose':
+          publishPoseEstimate(position, orientation)
+          break
+      }
+
+      // 发布后重置工具
+      setNavigationTool('none')
+    }
+
+    const publishGoalPose = (position, orientation) => {
+      console.log('[Navigation] 开始发布2D目标点')
+      console.log('[Navigation] 连接状态检查:', {
+        isConnected: rosbridge.isConnected,
+        connectionStatus: connectionStore.connectionStatus,
+        websocketState: connectionStore.websocket?.readyState
+      })
+
+      if (!rosbridge.isConnected) {
+        console.error('[Navigation] ❌ ROS Bridge未连接，无法发布消息')
+        ElMessage.error('ROS Bridge未连接，请先连接到ROS系统')
+        return false
+      }
+
+      // RViz兼容的消息格式 - 2D Goal Pose
+      const goalMsg = {
+        header: {
+          stamp: {
+            sec: Math.floor(Date.now() / 1000),
+            nanosec: (Date.now() % 1000) * 1000000
+          },
+          frame_id: 'map'  // RViz标准使用map坐标系
+        },
+        pose: {
+          position: {
+            x: position.x,
+            y: position.y,
+            z: 0.0  // 2D导航，z固定为0
+          },
+          orientation: {
+            x: orientation.x,
+            y: orientation.y,
+            z: orientation.z,
+            w: orientation.w
+          }
+        }
+      }
+
+      console.log('[Navigation] 发布2D目标点消息:', JSON.stringify(goalMsg, null, 2))
+
+      try {
+        // 发布到标准的goal_pose话题（RViz兼容）
+        console.log('[Navigation] 发布到话题: /goal_pose')
+        console.log('[Navigation] 消息类型: geometry_msgs/msg/PoseStamped')
+        const publishResult = rosbridge.publish('/goal_pose', 'geometry_msgs/msg/PoseStamped', goalMsg)
+        console.log('[Navigation] rosbridge.publish返回结果:', publishResult)
+
+        if (publishResult) {
+          const yawDegrees = (Math.atan2(2 * (orientation.w * orientation.z + orientation.x * orientation.y),
+                                         1 - 2 * (orientation.y * orientation.y + orientation.z * orientation.z)) * 180 / Math.PI).toFixed(1)
+          console.log(`[Navigation] ✅ 目标点发布成功: (${position.x.toFixed(2)}, ${position.y.toFixed(2)}) 方向: ${yawDegrees}°`)
+          ElMessage.success(`已设置目标点: (${position.x.toFixed(2)}, ${position.y.toFixed(2)}) 方向: ${yawDegrees}°`)
+
+          // 额外验证：订阅目标话题来验证消息是否真的发送了
+          console.log('[Navigation] 尝试验证消息发送...')
+          return true
+        } else {
+          throw new Error('发布函数返回false')
+        }
+      } catch (error) {
+        console.error('[Navigation] ❌ 发布目标点失败:', error)
+        console.error('[Navigation] 错误堆栈:', error.stack)
+        ElMessage.error(`发布目标点失败: ${error.message}`)
+        return false
+      }
+    }
+
+    const publishPoseEstimate = (position, orientation) => {
+      console.log('[Navigation] 开始发布2D位置估计')
+      console.log('[Navigation] 连接状态检查:', {
+        isConnected: rosbridge.isConnected,
+        connectionStatus: connectionStore.connectionStatus,
+        websocketState: connectionStore.websocket?.readyState
+      })
+
+      if (!rosbridge.isConnected) {
+        console.error('[Navigation] ❌ ROS Bridge未连接，无法发布消息')
+        ElMessage.error('ROS Bridge未连接，请先连接到ROS系统')
+        return false
+      }
+
+      // RViz兼容的消息格式 - 2D Pose Estimate
+      const poseMsg = {
+        header: {
+          stamp: {
+            sec: Math.floor(Date.now() / 1000),
+            nanosec: (Date.now() % 1000) * 1000000
+          },
+          frame_id: 'map'  // RViz标准使用map坐标系
+        },
+        pose: {
+          pose: {
+            position: {
+              x: position.x,
+              y: position.y,
+              z: 0.0  // 2D导航，z固定为0
+            },
+            orientation: {
+              x: orientation.x,
+              y: orientation.y,
+              z: orientation.z,
+              w: orientation.w
+            }
+          },
+          // RViz标准协方差矩阵 (6x6 = 36个元素)
+          // 表示位置和姿态的不确定性
+          covariance: [
+            0.25, 0.0, 0.0, 0.0, 0.0, 0.0,   // x的协方差
+            0.0, 0.25, 0.0, 0.0, 0.0, 0.0,   // y的协方差
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0,    // z的协方差（2D中不使用）
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0,    // roll的协方差（2D中不使用）
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.0,    // pitch的协方差（2D中不使用）
+            0.0, 0.0, 0.0, 0.0, 0.0, 0.06853891909  // yaw的协方差
+          ]
+        }
+      }
+
+      console.log('[Navigation] 发布2D位置估计消息:', JSON.stringify(poseMsg, null, 2))
+
+      try {
+        // 发布到标准的initialpose话题（RViz兼容）
+        console.log('[Navigation] 发布到话题: /initialpose')
+        console.log('[Navigation] 消息类型: geometry_msgs/msg/PoseWithCovarianceStamped')
+        const publishResult = rosbridge.publish('/initialpose', 'geometry_msgs/msg/PoseWithCovarianceStamped', poseMsg)
+        console.log('[Navigation] rosbridge.publish返回结果:', publishResult)
+
+        if (publishResult) {
+          const yawDegrees = (Math.atan2(2 * (orientation.w * orientation.z + orientation.x * orientation.y),
+                                         1 - 2 * (orientation.y * orientation.y + orientation.z * orientation.z)) * 180 / Math.PI).toFixed(1)
+          console.log(`[Navigation] ✅ 位置估计发布成功: (${position.x.toFixed(2)}, ${position.y.toFixed(2)}) 方向: ${yawDegrees}°`)
+          ElMessage.success(`已设置位置估计: (${position.x.toFixed(2)}, ${position.y.toFixed(2)}) 方向: ${yawDegrees}°`)
+          return true
+        } else {
+          throw new Error('发布函数返回false')
+        }
+      } catch (error) {
+        console.error('[Navigation] ❌ 发布位置估计失败:', error)
+        ElMessage.error(`发布位置估计失败: ${error.message}`)
       }
     }
 
@@ -2063,10 +2565,6 @@ export default {
         case 'position':
           // 更新位置显示设置
           visualizationObjects.forEach((object, topic) => {
-            // 机器人位姿显示
-            if (settings.showRobotPose !== undefined && object.userData?.type === 'robot_pose') {
-              object.visible = settings.showRobotPose
-            }
             // 轨迹显示
             if (settings.showTrajectory !== undefined) {
               if (object.userData?.type === 'robot_pose') {
@@ -2077,10 +2575,6 @@ export default {
                   }
                 })
               }
-            }
-            // 坐标系显示
-            if (settings.showCoordinateFrame !== undefined && object.userData?.type === 'coordinate_frame') {
-              object.visible = settings.showCoordinateFrame
             }
           })
           console.log('位置设置已更新:', settings)
@@ -2924,6 +3418,8 @@ export default {
       mapMesh,
       mapTexture,
       onMouseDown,
+      onMouseMove,
+      onMouseUp,
       // 暴露给父组件的方法
       resetCamera,
       setGridVisible,
@@ -2942,6 +3438,7 @@ export default {
       setLaserType,
       updateSettings,
       setViewPreset,
+      setNavigationTool,
       loadMapFile,
       loadMapFiles,
       fitCameraToPointCloud,

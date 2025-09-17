@@ -193,23 +193,55 @@
         <div class="control-item">
           <label>显示设置:</label>
           <div class="position-display-options">
-            <el-checkbox v-model="showRobotPose" @change="updatePositionSettings">显示机器人位姿</el-checkbox>
             <el-checkbox v-model="showTrajectory" @change="updatePositionSettings">显示轨迹</el-checkbox>
-            <el-checkbox v-model="showCoordinateFrame" @change="updatePositionSettings">显示坐标系</el-checkbox>
           </div>
         </div>
         
         <div class="control-item" v-if="showTrajectory">
           <label>轨迹长度:</label>
-          <el-slider 
-            v-model="trajectoryLength" 
-            :min="10" 
-            :max="1000" 
+          <el-slider
+            v-model="trajectoryLength"
+            :min="10"
+            :max="1000"
             :step="10"
             @change="updateTrajectorySettings"
             show-input
             input-size="small"
           />
+        </div>
+
+        <div class="control-item">
+          <label>导航工具:</label>
+          <div class="navigation-tools">
+            <el-button-group size="small">
+              <el-button
+                :type="currentTool === '2d_goal' ? 'primary' : 'default'"
+                @click="setNavigationTool('2d_goal')"
+                title="点击并拖拽设置目标位置和方向"
+              >
+                <el-icon><Aim /></el-icon>
+                2D目标点
+              </el-button>
+              <el-button
+                :type="currentTool === '2d_pose' ? 'primary' : 'default'"
+                @click="setNavigationTool('2d_pose')"
+                title="点击并拖拽设置初始位置和方向"
+              >
+                <el-icon><Location /></el-icon>
+                2D位置估计
+              </el-button>
+              <el-button
+                :type="currentTool === 'none' ? 'primary' : 'default'"
+                @click="setNavigationTool('none')"
+              >
+                <el-icon><Close /></el-icon>
+                取消
+              </el-button>
+            </el-button-group>
+          </div>
+          <div v-if="currentTool !== 'none'" class="tool-hint">
+            <small>{{ currentTool === '2d_goal' ? '拖拽设置目标方向 → 发布到 /goal_pose' : '拖拽设置朝向 → 发布到 /initialpose' }}</small>
+          </div>
         </div>
         
         <div class="position-info" v-if="currentPose">
@@ -271,17 +303,17 @@
 
 <script>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { Refresh, Aim, Folder, Grid, Coordinate } from '@element-plus/icons-vue'
+import { Refresh, Aim, Folder, Grid, Coordinate, Location, Close } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRosbridge } from '../../composables/useRosbridge'
 
 export default {
   name: 'Scene3DController',
   components: {
-    Refresh, Aim, Folder, Grid, Coordinate
+    Refresh, Aim, Folder, Grid, Coordinate, Location, Close
   },
   emits: [
-    'laser-type-change', 
+    'laser-type-change',
     'laser2d-change',
     'pointcloud-change',
     'map-topic-change',
@@ -289,7 +321,8 @@ export default {
     'odom-topic-change',
     'settings-update',
     'camera-reset',
-    'view-preset'
+    'view-preset',
+    'navigation-tool-change'
   ],
   setup(props, { emit }) {
     const rosbridge = useRosbridge()
@@ -318,10 +351,11 @@ export default {
     
     // 位置信息设置
     const selectedOdomTopic = ref('/odom')
-    const showRobotPose = ref(true)
     const showTrajectory = ref(true)
-    const showCoordinateFrame = ref(true)
     const trajectoryLength = ref(100)
+
+    // 导航工具设置
+    const currentTool = ref('none')
     
     // 全局设置
     const showGrid = ref(true)
@@ -552,11 +586,15 @@ export default {
     const updatePositionSettings = () => {
       emit('settings-update', {
         type: 'position',
-        showRobotPose: showRobotPose.value,
         showTrajectory: showTrajectory.value,
-        showCoordinateFrame: showCoordinateFrame.value,
         trajectoryLength: trajectoryLength.value
       })
+    }
+
+    const setNavigationTool = (tool) => {
+      currentTool.value = tool
+      emit('navigation-tool-change', tool)
+      console.log('设置导航工具:', tool)
     }
 
     const updateTrajectorySettings = () => {
@@ -636,12 +674,11 @@ export default {
       
       // 位置设置
       selectedOdomTopic,
-      showRobotPose,
       showTrajectory,
-      showCoordinateFrame,
       trajectoryLength,
       currentPose,
       currentVelocity,
+      currentTool,
       
       // 全局设置
       showGrid,
@@ -666,6 +703,7 @@ export default {
       updateMapSettings,
       updatePositionSettings,
       updateTrajectorySettings,
+      setNavigationTool,
       resetCamera,
       toggleGrid,
       toggleAxes,
@@ -760,6 +798,19 @@ export default {
   margin-bottom: 8px;
   color: #cbd5e1;
   font-size: 12px;
+}
+
+.tool-hint {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 4px;
+  border-left: 3px solid #3b82f6;
+}
+
+.tool-hint small {
+  color: #93c5fd;
+  font-size: 11px;
 }
 
 .position-info {

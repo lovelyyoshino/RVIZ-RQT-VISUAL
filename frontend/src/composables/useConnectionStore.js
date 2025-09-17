@@ -124,6 +124,7 @@ export const useConnectionStore = defineStore('connection', () => {
     connectionError.value = null
     subscribedTopics.value.clear()
     messageHandlers.value.clear()
+    advertisedTopics.value.clear()  // 清理发布者声明
     clearPendingRequests()
   }
   
@@ -361,21 +362,85 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
   
-  // 发布消息到主题
-  const publishMessage = (topic, messageType, message) => {
+  // 已声明的发布者
+  const advertisedTopics = ref(new Set())
+
+  // 声明发布者
+  const advertise = (topic, messageType) => {
     if (!isConnected.value) {
       console.warn('Not connected to ROS')
       return false
     }
-    
+
+    if (advertisedTopics.value.has(topic)) {
+      console.log(`[ConnectionStore] 话题 ${topic} 已经声明过发布者`)
+      return true
+    }
+
+    const advertiseMsg = {
+      op: 'advertise',
+      topic: topic,
+      type: messageType
+    }
+
+    console.log(`[ConnectionStore] 声明发布者:`, advertiseMsg)
+    const result = sendMessage(advertiseMsg)
+    if (result) {
+      advertisedTopics.value.add(topic)
+      console.log(`[ConnectionStore] ✅ 成功声明发布者: ${topic}`)
+    } else {
+      console.error(`[ConnectionStore] ❌ 声明发布者失败: ${topic}`)
+    }
+    return result
+  }
+
+  // 取消声明发布者
+  const unadvertise = (topic) => {
+    if (!isConnected.value) {
+      return false
+    }
+
+    const unadvertiseMsg = {
+      op: 'unadvertise',
+      topic: topic
+    }
+
+    console.log(`[ConnectionStore] 取消声明发布者: ${topic}`)
+    const result = sendMessage(unadvertiseMsg)
+    if (result) {
+      advertisedTopics.value.delete(topic)
+      console.log(`[ConnectionStore] ✅ 成功取消声明发布者: ${topic}`)
+    }
+    return result
+  }
+
+  // 发布消息到主题
+  const publishMessage = (topic, messageType, message) => {
+    if (!isConnected.value) {
+      console.warn('[ConnectionStore] Not connected to ROS')
+      return false
+    }
+
+    // 自动声明发布者（如果尚未声明）
+    if (!advertisedTopics.value.has(topic)) {
+      console.log(`[ConnectionStore] 自动声明发布者: ${topic}`)
+      if (!advertise(topic, messageType)) {
+        console.error(`[ConnectionStore] ❌ 无法声明发布者: ${topic}`)
+        return false
+      }
+    }
+
     const publishMsg = {
       op: 'publish',
       topic: topic,
       type: messageType,
       msg: message
     }
-    
-    return sendMessage(publishMsg)
+
+    console.log(`[ConnectionStore] 发布消息:`, publishMsg)
+    const result = sendMessage(publishMsg)
+    console.log(`[ConnectionStore] 发布结果: ${result}`)
+    return result
   }
   
   // ROS API 方法 - 返回Promise
@@ -473,6 +538,8 @@ export const useConnectionStore = defineStore('connection', () => {
     sendMessage,
     subscribeTopic,
     unsubscribeTopic,
+    advertise,
+    unadvertise,
     publishMessage,
     
     // ROS API方法

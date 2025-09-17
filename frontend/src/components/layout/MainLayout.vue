@@ -115,6 +115,7 @@
                   @settings-update="onSettingsUpdate"
                   @camera-reset="onCameraReset"
                   @view-preset="onViewPreset"
+                  @navigation-tool-change="onNavigationToolChange"
                 />
               </div>
             </div>
@@ -355,6 +356,13 @@ export default {
       }
     }
 
+    const onNavigationToolChange = (tool) => {
+      console.log('导航工具切换:', tool)
+      if (scene3dRef.value && scene3dRef.value.setNavigationTool) {
+        scene3dRef.value.setNavigationTool(tool)
+      }
+    }
+
     // 新增的布局控制方法
     const toggleTopologyFullscreen = () => {
       isTopologyFullscreen.value = !isTopologyFullscreen.value
@@ -403,7 +411,8 @@ export default {
       onOdomTopicChange,
       onSettingsUpdate,
       onCameraReset,
-      onViewPreset
+      onViewPreset,
+      onNavigationToolChange
     }
   }
 }
