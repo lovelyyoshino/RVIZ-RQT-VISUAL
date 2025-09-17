@@ -100,7 +100,7 @@ export default {
 
         try {
           const subscription = rosbridge.subscribe(topic, type, (message) => {
-            console.log(`[PositionPanel] 收到${topic}数据:`, message)
+            console.debug(`[PositionPanel] 收到${topic}数据:`, message)
 
             let position = null
             let orientation = null
@@ -130,7 +130,7 @@ export default {
             }
 
             if (position) {
-              console.log(`[PositionPanel] 解析到位置信息:`, position)
+              console.debug(`[PositionPanel] 解析到位置信息:`, position)
 
               // 更新位置信息（直接使用XYZ坐标），兼容下划线前缀
               positionData.value.x = position.x || position._x || 0.0
@@ -160,7 +160,11 @@ export default {
                 positionData.value.accuracy = 0.05 // 默认精度5cm
               }
 
-              console.log(`[PositionPanel] 位置更新: (${positionData.value.x.toFixed(3)}, ${positionData.value.y.toFixed(3)}, ${positionData.value.z.toFixed(3)})`)
+              // 减少位置更新的日志输出频率
+              if (!subscribeToPosition._lastLogTime || Date.now() - subscribeToPosition._lastLogTime > 5000) {
+                console.log(`[PositionPanel] 位置更新: (${positionData.value.x.toFixed(3)}, ${positionData.value.y.toFixed(3)}, ${positionData.value.z.toFixed(3)})`)
+                subscribeToPosition._lastLogTime = Date.now()
+              }
             } else {
               console.warn(`[PositionPanel] 无法从${topic}解析位置信息`)
             }

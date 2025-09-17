@@ -129,6 +129,7 @@ class RosbridgeService:
         self._loop = None
         
         # 可视化状态
+        self._cache_warning_counts = {}  # 缓存警告计数
         self.visualization_state = VisualizationState(
             camera_settings=CameraSettings(
                 position=(5.0, 5.0, 5.0),
@@ -591,12 +592,11 @@ class RosbridgeService:
                         self._message_counts[topic] = 0
                     self._message_counts[topic] += 1
 
-                    # 记录第一条消息和周期性统计
+                    # 只记录第一条消息，减少日志输出
                     if self._message_counts[topic] == 1:
                         logger.info(f"🎉 First message received on topic {topic}! Type: {type(msg).__name__}")
                         logger.info(f"✅ Successfully bridged ROS2 callback to async processing for {topic}")
-                    elif self._message_counts[topic] % 50 == 0:
-                        logger.info(f"📊 Received {self._message_counts[topic]} messages on topic {topic}")
+                    # 移除频繁的统计日志以避免刷屏
 
                     logger.debug(f"📨 Processing message on topic {topic}, type: {type(msg).__name__}, queue size: {self.message_queue.qsize()}")
 
@@ -685,17 +685,17 @@ class RosbridgeService:
                 else:
                     logger.warning(f"⚠️ Failed to broadcast {topic} to clients")
             else:
-                logger.warning(f"📭 No active subscribers for {topic}, message cached only")
-                logger.warning(f"💡 Tip: Frontend needs to subscribe to {topic} to receive messages")
-                logger.warning(f"📊 Message details: type={type(msg).__name__}, size={len(str(msg_dict))} chars")
+                # 减少缓存消息的日志输出频率
+                if topic not in self._cache_warning_counts:
+                    self._cache_warning_counts[topic] = 0
 
-                # 🔍 额外调试信息
-                logger.warning(f"🔍 Debug: Total connections: {len(self.connection_manager.connection_info)}")
-                if len(self.connection_manager.connection_info) > 0:
-                    for client_id, info in self.connection_manager.connection_info.items():
-                        logger.warning(f"🔍   Client {client_id}: {len(info.subscribed_topics)} subscriptions: {info.subscribed_topics}")
-                else:
-                    logger.warning(f"🔍 No connection info found - this indicates a connection tracking issue")
+                self._cache_warning_counts[topic] += 1
+
+                # 只在第一次和每100次时输出警告
+                if self._cache_warning_counts[topic] == 1 or self._cache_warning_counts[topic] % 100 == 0:
+                    logger.warning(f"📭 No active subscribers for {topic}, message cached only ({self._cache_warning_counts[topic]} times)")
+                    if self._cache_warning_counts[topic] == 1:
+                        logger.warning(f"💡 Tip: Frontend needs to subscribe to {topic} to receive messages")
 
             # 缓存消息
             self.message_cache.append({

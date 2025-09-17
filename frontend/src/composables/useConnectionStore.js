@@ -76,7 +76,7 @@ export const useConnectionStore = defineStore('connection', () => {
       websocket.value.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data)
-          console.log(`[ConnectionStore] 📨 收到消息:`, message)
+          console.debug(`[ConnectionStore] 📨 收到消息:`, message)
           handleMessage(message)
         } catch (error) {
           console.error('[ConnectionStore] ❌ 解析消息失败:', error, event.data)
@@ -163,12 +163,12 @@ export const useConnectionStore = defineStore('connection', () => {
   const handleMessage = (message) => {
     const { op, topic, id } = message
     
-    console.log(`[ConnectionStore] 🔀 处理消息 - 操作: ${op}, 主题: ${topic || 'N/A'}`)
-    
+    console.debug(`[ConnectionStore] 🔀 处理消息 - 操作: ${op}, 主题: ${topic || 'N/A'}`)
+
     // 根据操作类型处理消息
     switch (op) {
       case 'publish':
-        console.log(`[ConnectionStore] 📢 发布消息到主题: ${topic}`)
+        console.debug(`[ConnectionStore] 📢 发布消息到主题: ${topic}`)
         handleTopicMessage(topic, message.msg)
         break
       case 'get_topics_result':
@@ -264,21 +264,19 @@ export const useConnectionStore = defineStore('connection', () => {
   const handleTopicMessage = (topic, message) => {
     const handlers = messageHandlers.value.get(topic)
 
-    console.log(`[ConnectionStore] 🎯 处理主题消息: ${topic}`)
-    console.log(`[ConnectionStore] - 消息内容:`, message)
-    console.log(`[ConnectionStore] - 注册的处理器数量: ${handlers?.size || 0}`)
-    console.log(`[ConnectionStore] - 当前订阅的主题:`, Array.from(subscribedTopics.value))
-    console.log(`[ConnectionStore] - 主题在订阅列表中: ${subscribedTopics.value.has(topic)}`)
+    // 减少详细日志输出，只保留关键信息
+    console.debug(`[ConnectionStore] 🎯 处理主题消息: ${topic}`)
 
     if (handlers && handlers.size > 0) {
       let handlerIndex = 0
       handlers.forEach(handler => {
         try {
-          console.log(`[ConnectionStore] - 调用处理器 #${++handlerIndex}...`)
+          handlerIndex++
           handler(message)
-          console.log(`[ConnectionStore] - ✅ 处理器 #${handlerIndex} 执行成功`)
+          // 只在出错时输出详细信息
         } catch (error) {
           console.error(`[ConnectionStore] - ❌ 处理器 #${handlerIndex} 执行失败:`, error)
+          console.error(`[ConnectionStore] - 消息内容:`, message)
         }
       })
     } else {

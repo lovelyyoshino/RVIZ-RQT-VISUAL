@@ -336,7 +336,7 @@ export default {
 
         try {
           rosbridge.subscribe(topic, type, (message) => {
-            console.log(`[Scene3D] 收到${topic}位置数据，更新机器人模型`)
+            // console.log(`[Scene3D] 收到${topic}位置数据，更新机器人模型`)
 
             let position = null
             let orientation = null
@@ -367,7 +367,8 @@ export default {
             // 使用updateRobotPosition函数更新机器人位置
             if (position) {
               updateRobotPosition(position, orientation)
-              console.log(`[Scene3D] 机器人位置已更新: (${position.x?.toFixed(3)}, ${position.y?.toFixed(3)}, ${position.z?.toFixed(3)})`)
+              // 减少频繁的位置更新日志
+              // console.debug(`[Scene3D] 机器人位置已更新: (${position.x?.toFixed(3)}, ${position.y?.toFixed(3)}, ${position.z?.toFixed(3)})`)
             } else {
               console.warn(`[Scene3D] 无法从${topic}解析位置信息`, message)
             }
@@ -764,7 +765,7 @@ export default {
 
       // 只每5秒记录一次日志，避免刷屏
       if (now - lastLogTime > 5000) {
-        console.log(`[Scene3D] 📡 处理可视化更新 - 主题: ${topic}, 消息类型: ${messageType}, 最近5秒处理了${messageCount}条消息`)
+        console.debug(`[Scene3D] 📡 处理可视化更新 - 主题: ${topic}, 消息类型: ${messageType}, 最近5秒处理了${messageCount}条消息`)
         lastLogTime = now
         messageCount = 0
       }
@@ -777,17 +778,17 @@ export default {
         switch (messageType) {
           case 'sensor_msgs/msg/PointCloud2':
           case 'sensor_msgs/PointCloud2':
-            console.log(`[Scene3D] 🔄 处理点云消息...`)
+            console.debug(`[Scene3D] 🔄 处理点云消息...`)
             updatePointCloud(topic, message)
             break
           case 'sensor_msgs/msg/LaserScan':
           case 'sensor_msgs/LaserScan':
-            console.log(`[Scene3D] 🔄 处理激光雷达消息...`)
+            console.debug(`[Scene3D] 🔄 处理激光雷达消息...`)
             updateLaserScan(topic, message)
             break
           case 'visualization_msgs/msg/Marker':
           case 'visualization_msgs/Marker':
-            console.log(`[Scene3D] 🔄 处理标记消息...`)
+            console.debug(`[Scene3D] 🔄 处理标记消息...`)
             updateMarker(topic, message)
             break
           case 'visualization_msgs/msg/MarkerArray':
@@ -1152,8 +1153,9 @@ export default {
               if (trimmed === '-inf') return -Infinity
               if (trimmed === 'nan') return NaN
               return parseFloat(trimmed)
-            }).filter(val => !isNaN(val) && isFinite(val)) // 过滤掉无效值
-            console.log(`[LaserScan] 成功解析${ranges.length}个ranges值`)
+            })
+            // 不要在这里过滤无效值！保留所有值以维持角度索引对应关系
+            console.log(`[LaserScan] 成功解析${ranges.length}个ranges值 (包含${ranges.filter(val => !isFinite(val)).length}个无效值)`)
           } else {
             console.error(`[LaserScan] 无法解析ranges字符串格式: ${ranges}`)
             ranges = []
@@ -1247,18 +1249,34 @@ export default {
 
             // 过滤有效距离值
             if (range >= rangeMin && range <= rangeMax && isFinite(range)) {
-              // LaserScan标准坐标转换：极坐标转笛卡尔坐标
-              // angle_min通常是-π（-180°），angle_max通常是π（180°）
-              // 激光雷达坐标系：X轴向前，Y轴向左
+              // 极坐标转笛卡尔坐标 - 完全按照flask_ros/map-2d.js的drawLaserScan实现
+              // 第730-736行的核心逻辑：
+              //
+              // const laserAngle = scan.angle_min + index * scan.angle_increment;
+              // const worldAngle = this.robotPose.theta + laserAngle;
+              // const endX = this.robotPose.x + range * Math.cos(worldAngle);
+              // const endY = this.robotPose.y + range * Math.sin(worldAngle);
+
+              // 激光雷达坐标转换 - 修复显示为一条线的问题
+              //
+              // 问题分析：显示为一条线说明角度计算有问题
+              // 让我直接使用标准的极坐标转换，不考虑机器人姿态
+
+              // 极坐标转笛卡尔坐标 - 修复坐标系映射
+              // ROS标准：angle_min=-π, angle_max=+π, 0度为前方(+X轴)
+              // Three.js坐标系：需要正确映射X/Y/Z轴
+
+              // 方法1：标准ROS坐标系 (先试试这个)
               const x = range * Math.cos(angle)
               const y = range * Math.sin(angle)
               const z = 0
 
-              // 调试：打印关键角度的点
-              const angleDeg = angle * 180 / Math.PI
-              if (validPoints < 10) {
-                console.log(`[LaserScan] 点${validPoints}: 角度=${angleDeg.toFixed(1)}°, 距离=${range.toFixed(2)}m, 坐标=(${x.toFixed(2)}, ${y.toFixed(2)})`)
+              // 只在第一次更新时输出少量验证数据
+              if (!updateLaserScan._firstLogged && validPoints < 3) {
+                const angleDeg = angle * 180 / Math.PI
+                console.log(`[LaserScan] 验证点${validPoints}: i=${i}, angle=${angleDeg.toFixed(1)}°, range=${range.toFixed(2)}m`)
               }
+
 
               positions.push(x, y, z)
 
@@ -1268,14 +1286,6 @@ export default {
               minY = Math.min(minY, y)
               maxY = Math.max(maxY, y)
 
-              // 调试：只在第一次更新时记录特定点的坐标
-              if (!updateLaserScan._firstLogged) {
-                // 记录0度、90度、180度、270度方向的点（如果有的话）
-                const angleDeg = angle * 180 / Math.PI
-                if (Math.abs(angleDeg % 90) < 2 || validPoints < 3) {  // 接近90度倍数或前3个点
-                  console.log(`[LaserScan] 点${validPoints}: 角度=${angleDeg.toFixed(1)}°, 距离=${range.toFixed(2)}m, 坐标=(${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`)
-                }
-              }
 
               // 改进的颜色方案：更明显的颜色，基于距离
               const normalizedRange = Math.min(Math.max((range - rangeMin) / (rangeMax - rangeMin), 0), 1)
@@ -1292,6 +1302,38 @@ export default {
           }
 
           console.log(`[LaserScan] 处理结果: ${validPoints}/${ranges.length} 有效点`)
+
+          // 详细统计：分析有效点的分布
+          if (!updateLaserScan._firstLogged && validPoints > 0) {
+            console.log(`[LaserScan] 📊 数据分析:`)
+            console.log(`  - 总测量点: ${ranges.length}`)
+            console.log(`  - 有效点数: ${validPoints}`)
+            console.log(`  - 无效点数: ${ranges.length - validPoints}`)
+            console.log(`  - 有效率: ${(validPoints / ranges.length * 100).toFixed(1)}%`)
+            console.log(`  - 角度范围: ${(angleMin * 180 / Math.PI).toFixed(1)}° ~ ${(angleMax * 180 / Math.PI).toFixed(1)}°`)
+            console.log(`  - 距离范围: ${rangeMin}m ~ ${rangeMax}m`)
+
+            // 检查是否真的是360度扫描
+            const totalAngleDeg = (angleMax - angleMin) * 180 / Math.PI
+            console.log(`  - 扫描角度跨度: ${totalAngleDeg.toFixed(1)}°`)
+            console.log(`  - 是否360度扫描: ${Math.abs(totalAngleDeg - 360) < 5 ? '是' : '否'}`)
+
+            // 分析有效点的角度分布
+            const validAngles = []
+            for (let i = 0; i < ranges.length; i++) {
+              const range = ranges[i]
+              if (range >= rangeMin && range <= rangeMax && isFinite(range)) {
+                const angle = angleMin + i * angleIncrement
+                validAngles.push(angle * 180 / Math.PI)
+              }
+            }
+            if (validAngles.length > 0) {
+              const minAngle = Math.min(...validAngles)
+              const maxAngle = Math.max(...validAngles)
+              console.log(`  - 有效点角度分布: ${minAngle.toFixed(1)}° ~ ${maxAngle.toFixed(1)}°`)
+              console.log(`  - 角度分布跨度: ${(maxAngle - minAngle).toFixed(1)}°`)
+            }
+          }
 
           // 只在第一次更新时显示边界框信息
           if (!updateLaserScan._firstLogged && validPoints > 0) {
