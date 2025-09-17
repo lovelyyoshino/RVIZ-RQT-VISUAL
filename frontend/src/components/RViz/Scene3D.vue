@@ -87,7 +87,7 @@ export default {
       },
       position: {
         showTrajectory: true,
-        trajectoryLength: 100
+        trajectoryLength: 20
       }
     }
 
@@ -344,7 +344,7 @@ export default {
         }
 
         robotModel.userData.lastUpdate = Date.now()
-        console.log(`[updateRobotPosition] 机器人位置更新: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`)
+        // console.log(`[updateRobotPosition] 机器人位置更新: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`)
 
         // 创建轨迹点（基于机器人位置更新）
         if (persistentSettings.position.showTrajectory) {
@@ -354,12 +354,13 @@ export default {
           if (trajectoryPoints.length === 0 ||
               trajectoryPoints[trajectoryPoints.length - 1].distanceTo(currentPos) > 0.1) {
             trajectoryPoints.push(currentPos.clone())
-            console.log(`[Trajectory-Robot] 添加轨迹点 #${trajectoryPoints.length}: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`)
+            // console.log(`[Trajectory-Robot] 添加轨迹点 #${trajectoryPoints.length}: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`)
 
-            // 限制轨迹点数量
-            if (trajectoryPoints.length > 1000) {
+            // 限制轨迹点数量（由控制面板传入，范围10~100）
+            const maxLen = Math.max(10, Math.min(100, persistentSettings.position.trajectoryLength || 100))
+            if (trajectoryPoints.length > maxLen) {
               trajectoryPoints.shift()
-              console.log(`[Trajectory-Robot] 轨迹点数量达到上限，移除最早的点`)
+              // console.log(`[Trajectory-Robot] 轨迹点数量达到上限，移除最早的点`)
             }
 
             // 创建或更新轨迹线
@@ -384,7 +385,7 @@ export default {
               globalTrajectoryLine.visible = true
 
               scene.add(globalTrajectoryLine)
-              console.log(`[Trajectory-Robot] 创建全局轨迹线，点数: ${trajectoryPoints.length}`)
+              // console.log(`[Trajectory-Robot] 创建全局轨迹线，点数: ${trajectoryPoints.length}`)
             }
           }
         }
@@ -812,17 +813,17 @@ export default {
     
     // ROS主题订阅方法
     const subscribeToRosTopic = (topicName, messageType) => {
-      console.log(`[Scene3D] 订阅ROS主题: ${topicName}, 类型: ${messageType}`)
+      // console.log(`[Scene3D] 订阅ROS主题: ${topicName}, 类型: ${messageType}`)
       
         // 先清理所有相关的订阅和可视化对象（实现真正的单一主题订阅）
-      console.log(`[Scene3D] 准备订阅新主题: ${topicName}, 当前订阅数: ${rosSubscriptions.size}`)
+      // console.log(`[Scene3D] 准备订阅新主题: ${topicName}, 当前订阅数: ${rosSubscriptions.size}`)
 
       // 清理所有旧的订阅和可视化对象
       if (rosSubscriptions.size > 0) {
-        console.log(`[Scene3D] 清理所有旧订阅...`)
+        // console.log(`[Scene3D] 清理所有旧订阅...`)
         const oldTopics = Array.from(rosSubscriptions.keys())
         oldTopics.forEach(oldTopicName => {
-          console.log(`[Scene3D] 取消订阅: ${oldTopicName}`)
+          // console.log(`[Scene3D] 取消订阅: ${oldTopicName}`)
           unsubscribeFromRosTopic(oldTopicName)
         })
       }
@@ -832,12 +833,13 @@ export default {
       
       try {
         // 使用rosbridge订阅主题
-        console.log(`[Scene3D] 调用rosbridge.subscribe...`)
+        // console.log(`[Scene3D] 调用rosbridge.subscribe...`)
         
         const subscription = rosbridge.subscribe(topicName, messageType, (message) => {
           const now = Date.now()
           const subInfo = rosSubscriptions.get(topicName)
 
+          /*
           console.log(`[Scene3D] 📨 收到主题消息: ${topicName}`, {
             messageType: typeof message,
             hasRanges: message?.ranges?.length,
@@ -845,12 +847,13 @@ export default {
             hasPoints: message?.points?.length,
             messageKeys: message ? Object.keys(message) : []
           })
+          */
 
           if (subInfo) {
             subInfo.messageCount = (subInfo.messageCount || 0) + 1
             subInfo.lastMessageTime = now
 
-            console.log(`[Scene3D] 🎉 收到主题 ${topicName} 的第${subInfo.messageCount}条消息`)
+            // console.log(`[Scene3D] 🎉 收到主题 ${topicName} 的第${subInfo.messageCount}条消息`)
 
             // 确保消息不为空
             if (message) {
@@ -863,7 +866,7 @@ export default {
           }
         })
         
-        console.log(`[Scene3D] rosbridge.subscribe返回:`, subscription)
+        // console.log(`[Scene3D] rosbridge.subscribe返回:`, subscription)
         
         // 检查订阅是否成功
         if (subscription) {
@@ -878,7 +881,7 @@ export default {
           }
           
           rosSubscriptions.set(topicName, subscriptionInfo)
-          console.log(`[Scene3D] ✅ 成功订阅主题: ${topicName}, 当前订阅数: ${rosSubscriptions.size}`)
+          // console.log(`[Scene3D] ✅ 成功订阅主题: ${topicName}, 当前订阅数: ${rosSubscriptions.size}`)
           
           // 设置定时检查，确认是否收到数据
           setTimeout(() => {
@@ -887,7 +890,7 @@ export default {
               console.warn(`[Scene3D] ⚠️ 主题 ${topicName} 在 5 秒内没有收到任何消息`)
               ElMessage.warning(`主题 ${topicName} 可能没有数据发布，请检查ROS系统`)
             } else if (sub) {
-              console.log(`[Scene3D] ✅ 主题 ${topicName} 正常，已收到 ${sub.messageCount} 条消息`)
+              // console.log(`[Scene3D] ✅ 主题 ${topicName} 正常，已收到 ${sub.messageCount} 条消息`)
             }
           }, 5000)
           
@@ -910,11 +913,11 @@ export default {
       const subscription = rosSubscriptions.get(topicName)
       if (subscription) {
         try {
-          console.log(`[Scene3D] 取消订阅主题: ${topicName}`)
+          // console.log(`[Scene3D] 取消订阅主题: ${topicName}`)
           rosbridge.unsubscribe(subscription)
           rosSubscriptions.delete(topicName)
           removeVisualization(topicName)
-          console.log(`[Scene3D] 已成功取消订阅主题: ${topicName}`)
+          // console.log(`[Scene3D] 已成功取消订阅主题: ${topicName}`)
         } catch (error) {
           console.error(`[Scene3D] 取消订阅主题 ${topicName} 失败:`, error)
         }
@@ -927,7 +930,7 @@ export default {
 
     // 取消所有订阅
     const unsubscribeAllTopics = () => {
-      console.log(`[Scene3D] 取消所有订阅, 当前订阅数: ${rosSubscriptions.size}`)
+      // console.log(`[Scene3D] 取消所有订阅, 当前订阅数: ${rosSubscriptions.size}`)
 
       rosSubscriptions.forEach((subscription, topicName) => {
         unsubscribeFromRosTopic(topicName)
@@ -1024,7 +1027,7 @@ export default {
     const removeVisualization = (topic) => {
       const object = visualizationObjects.get(topic)
       if (object) {
-        console.log(`[Scene3D] 清除可视化对象: ${topic}`)
+        // console.log(`[Scene3D] 清除可视化对象: ${topic}`)
 
         // 递归清理对象和其子对象
         const cleanupObject = (obj) => {
@@ -1047,13 +1050,13 @@ export default {
         scene.remove(object)
         visualizationObjects.delete(topic)
 
-        console.log(`[Scene3D] 已清除可视化对象: ${topic}, 剩余对象数: ${visualizationObjects.size}`)
+        // console.log(`[Scene3D] 已清除可视化对象: ${topic}, 剩余对象数: ${visualizationObjects.size}`)
       }
 
       // 同时检查并清除关联的激光连线对象
       const linesObject = visualizationObjects.get(topic + '_lines')
       if (linesObject) {
-        console.log(`[Scene3D] 清除激光连线对象: ${topic}_lines`)
+        // console.log(`[Scene3D] 清除激光连线对象: ${topic}_lines`)
         const cleanupObject = (obj) => {
           if (obj.geometry) {
             obj.geometry.dispose()
@@ -1074,7 +1077,7 @@ export default {
 
     // 清除所有可视化对象（但保留地图）
     const clearAllVisualizations = () => {
-      console.log(`[Scene3D] 清除所有可视化对象, 当前数量: ${visualizationObjects.size}`)
+      // console.log(`[Scene3D] 清除所有可视化对象, 当前数量: ${visualizationObjects.size}`)
 
       // 需要保留的主题类型（地图相关）
       const preservedTopics = new Set()
@@ -1086,7 +1089,7 @@ export default {
 
         // 只保留PGM加载的地图，不保留主题订阅的地图
         if (topic === 'loaded_map') {
-          console.log(`[Scene3D] 保留PGM加载的地图: ${topic}`)
+          // console.log(`[Scene3D] 保留PGM加载的地图: ${topic}`)
           preservedTopics.add(topic)
         } else {
           removeVisualization(topic)
@@ -1096,7 +1099,7 @@ export default {
       // 清理轨迹点
       trajectoryPoints = []
 
-      console.log(`[Scene3D] 已清除可视化对象，保留 ${preservedTopics.size} 个地图对象`)
+      // console.log(`[Scene3D] 已清除可视化对象，保留 ${preservedTopics.size} 个地图对象`)
       ElMessage.info(`已清除可视化对象，保留了 ${preservedTopics.size} 个地图`)
     }
     
@@ -1115,7 +1118,7 @@ export default {
       const shouldLog = pointCloudUpdateCount <= 3 || pointCloudUpdateCount % 100 === 0
 
       if (shouldLog) {
-        console.log(`Updating point cloud for ${topic} (update #${pointCloudUpdateCount})`)
+        // console.log(`Updating point cloud for ${topic} (update #${pointCloudUpdateCount})`)
       }
       
       try {
@@ -1132,7 +1135,7 @@ export default {
         // 解析点云数据
         if (message && typeof message === 'object') {
           if (shouldLog) {
-            console.log('Processing PointCloud2 message')
+            // console.log('Processing PointCloud2 message')
             console.log('Fields:', message.fields)
             console.log('Width:', message.width, 'Height:', message.height, 'Point step:', message.point_step)
           }
@@ -1350,7 +1353,7 @@ export default {
     }
     
     const updateLaserScan = (topic, message) => {
-      console.log(`[LaserScan] 开始处理激光雷达数据 for ${topic}`)
+      // console.log(`[LaserScan] 开始处理激光雷达数据 for ${topic}`)
 
       // 兼容不同的字段命名格式（有些有下划线前缀）
       let ranges = message.ranges || message._ranges
@@ -1363,7 +1366,7 @@ export default {
 
       // 处理ranges字段 - 可能是字符串格式的Python array
       if (typeof ranges === 'string') {
-        console.log(`[LaserScan] ranges是字符串格式，尝试解析: ${ranges.substring(0, 100)}...`)
+        // console.log(`[LaserScan] ranges是字符串格式，尝试解析: ${ranges.substring(0, 100)}...`)
         try {
           // 解析Python array格式：array('f', [1.0, 2.0, 3.0, ...])
           const match = ranges.match(/array\('f',\s*\[(.*)\]\)/)
@@ -1378,7 +1381,7 @@ export default {
               return parseFloat(trimmed)
             })
             // 不要在这里过滤无效值！保留所有值以维持角度索引对应关系
-            console.log(`[LaserScan] 成功解析${ranges.length}个ranges值 (包含${ranges.filter(val => !isFinite(val)).length}个无效值)`)
+            // console.log(`[LaserScan] 成功解析${ranges.length}个ranges值 (包含${ranges.filter(val => !isFinite(val)).length}个无效值)`) 
           } else {
             console.error(`[LaserScan] 无法解析ranges字符串格式: ${ranges}`)
             ranges = []
@@ -1389,22 +1392,7 @@ export default {
         }
       }
 
-      console.log(`[LaserScan] 消息结构:`, {
-        ranges_length: ranges ? ranges.length : 'undefined',
-        angle_min: angle_min,
-        angle_max: angle_max,
-        angle_increment: angle_increment,
-        range_min: range_min,
-        range_max: range_max,
-        header: header
-      })
 
-      // 验证必要字段
-      if (!ranges || !Array.isArray(ranges) || ranges.length === 0) {
-        console.error(`[LaserScan] 无效的激光雷达消息: ranges 字段无效`)
-        console.error(`[LaserScan] 消息内容:`, message)
-        return
-      }
 
       if (angle_min === undefined || angle_max === undefined || angle_increment === undefined) {
         console.error(`[LaserScan] 无效的激光雷达消息: 缺少角度信息`)
@@ -1412,7 +1400,7 @@ export default {
         return
       }
 
-      console.log(`[LaserScan] ✅ 消息验证通过，开始处理 ${ranges.length} 个激光点`)
+      // console.log(`[LaserScan] ✅ 消息验证通过，开始处理 ${ranges.length} 个激光点`)
 
       removeVisualization(topic)
 
@@ -1497,7 +1485,7 @@ export default {
               // 只在第一次更新时输出少量验证数据
               if (!updateLaserScan._firstLogged && validPoints < 3) {
                 const angleDeg = angle * 180 / Math.PI
-                console.log(`[LaserScan] 验证点${validPoints}: i=${i}, angle=${angleDeg.toFixed(1)}°, range=${range.toFixed(2)}m`)
+                // console.log(`[LaserScan] 验证点${validPoints}: i=${i}, angle=${angleDeg.toFixed(1)}°, range=${range.toFixed(2)}m`)
               }
 
 
@@ -1524,11 +1512,11 @@ export default {
             }
           }
 
-          console.log(`[LaserScan] 处理结果: ${validPoints}/${ranges.length} 有效点`)
+          // console.log(`[LaserScan] 处理结果: ${validPoints}/${ranges.length} 有效点`)
 
           // 详细统计：分析有效点的分布
           if (!updateLaserScan._firstLogged && validPoints > 0) {
-            console.log(`[LaserScan] 📊 数据分析:`)
+            // console.log(`[LaserScan] 📊 数据分析:`)
             console.log(`  - 总测量点: ${ranges.length}`)
             console.log(`  - 有效点数: ${validPoints}`)
             console.log(`  - 无效点数: ${ranges.length - validPoints}`)
@@ -1560,9 +1548,9 @@ export default {
 
           // 只在第一次更新时显示边界框信息
           if (!updateLaserScan._firstLogged && validPoints > 0) {
-            console.log(`[LaserScan] 点云边界框: X=[${minX.toFixed(2)}, ${maxX.toFixed(2)}], Y=[${minY.toFixed(2)}, ${maxY.toFixed(2)}]`)
-            console.log(`[LaserScan] 点云尺寸: ${(maxX - minX).toFixed(2)}m x ${(maxY - minY).toFixed(2)}m`)
-            console.log(`[LaserScan] X范围: ${(maxX - minX).toFixed(2)}m, Y范围: ${(maxY - minY).toFixed(2)}m`)
+            // console.log(`[LaserScan] 点云边界框: X=[${minX.toFixed(2)}, ${maxX.toFixed(2)}], Y=[${minY.toFixed(2)}, ${maxY.toFixed(2)}]`)
+            // console.log(`[LaserScan] 点云尺寸: ${(maxX - minX).toFixed(2)}m x ${(maxY - minY).toFixed(2)}m`)
+            // console.log(`[LaserScan] X范围: ${(maxX - minX).toFixed(2)}m, Y范围: ${(maxY - minY).toFixed(2)}m`)
 
             // 如果Y范围太小，说明有问题
             if ((maxY - minY) < 1.0) {
@@ -1648,7 +1636,7 @@ export default {
 
         // 只在第一次成功时显示详细日志和消息
         if (!updateLaserScan._firstLogged) {
-          console.log(`[LaserScan] 成功添加激光雷达点云: ${positions.length / 3} 个点`)
+          // console.log(`[LaserScan] 成功添加激光雷达点云: ${positions.length / 3} 个点`)
           ElMessage.success(`激光雷达 ${topic} 显示成功: ${positions.length / 3} 个点`)
           updateLaserScan._firstLogged = true
         }
@@ -1661,7 +1649,7 @@ export default {
     
     const updateMarker = (topic, message) => {
       // 标记可视化实现
-      console.log(`Updating marker for ${topic}:`, message)
+      // console.log(`Updating marker for ${topic}:`, message)
       
       removeVisualization(topic)
       
@@ -1728,7 +1716,7 @@ export default {
     
     const updateMarkerArray = (topic, message) => {
       // 标记数组可视化实现
-      console.log(`Updating marker array for ${topic}:`, message)
+      // console.log(`Updating marker array for ${topic}:`, message)
       
       removeVisualization(topic)
       
@@ -1753,7 +1741,7 @@ export default {
     
     const updatePath = (topic, message) => {
       // 路径可视化实现
-      console.log(`Updating path for ${topic}:`, message)
+      // console.log(`Updating path for ${topic}:`, message)
       
       removeVisualization(topic)
       
@@ -1781,8 +1769,8 @@ export default {
     
 
     const updateOdometry = (topic, message) => {
-      console.log(`[updateOdometry] ⚙️ 开始处理里程计消息 - 主题: ${topic}`)
-      console.log(`[updateOdometry] 消息内容:`, message)
+      // console.log(`[updateOdometry] ⚙️ 开始处理里程计消息 - 主题: ${topic}`)
+      // console.log(`[updateOdometry] 消息内容:`, message)
 
       try {
         removeVisualization(topic)
@@ -1820,10 +1808,11 @@ export default {
         if (trajectoryPoints.length === 0 ||
             trajectoryPoints[trajectoryPoints.length - 1].distanceTo(currentPos) > 0.1) {
           trajectoryPoints.push(currentPos.clone())
-          console.log(`[Trajectory] 添加轨迹点 #${trajectoryPoints.length}: (${currentPos.x.toFixed(2)}, ${currentPos.y.toFixed(2)}, ${currentPos.z.toFixed(2)})`)
+          // console.log(`[Trajectory] 添加轨迹点 #${trajectoryPoints.length}: (${currentPos.x.toFixed(2)}, ${currentPos.y.toFixed(2)}, ${currentPos.z.toFixed(2)})`)
 
-          // 限制轨迹点数量
-          if (trajectoryPoints.length > 1000) {
+          // 限制轨迹点数量（由控制面板传入，范围10~100）
+          const maxLen = Math.max(10, Math.min(100, persistentSettings.position.trajectoryLength || 100))
+          if (trajectoryPoints.length > maxLen) {
             trajectoryPoints.shift()
           }
         }
@@ -1893,7 +1882,7 @@ export default {
           visualizationObjects.set(topic, arrow)
         }
 
-        console.log(`Successfully updated odometry at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`)
+        // console.log(`Successfully updated odometry at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`)
 
       } catch (error) {
         console.error('Error updating odometry:', error)
@@ -1934,7 +1923,7 @@ export default {
         scene.add(axesHelper)
         visualizationObjects.set(topic, axesHelper)
 
-        console.log(`Successfully updated pose at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`)
+        // console.log(`Successfully updated pose at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`)
 
       } catch (error) {
         console.error('Error updating pose stamped:', error)
@@ -2020,7 +2009,7 @@ export default {
         scene.add(group)
         visualizationObjects.set(topic, group)
 
-        console.log(`Successfully updated pose with covariance at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`)
+        // console.log(`Successfully updated pose with covariance at (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`)
 
       } catch (error) {
         console.error('Error updating pose with covariance:', error)
@@ -2071,7 +2060,7 @@ export default {
       verificationSubscriptions.forEach((subscription, topic) => {
         try {
           rosbridge.unsubscribe(subscription)
-          console.log(`[Verification] 取消订阅验证话题: ${topic}`)
+          // console.log(`[Verification] 取消订阅验证话题: ${topic}`)
         } catch (error) {
           console.error(`[Verification] 取消订阅${topic}失败:`, error)
         }
@@ -2141,7 +2130,7 @@ export default {
       rosSubscriptions.forEach((subscription, topicName) => {
         try {
           rosbridge.unsubscribe(subscription)
-          console.log(`清理ROS订阅: ${topicName}`)
+          // console.log(`清理ROS订阅: ${topicName}`)
         } catch (error) {
           console.error(`清理ROS订阅失败: ${topicName}`, error)
         }
@@ -2335,10 +2324,10 @@ export default {
 
       try {
         // 发布到标准的goal_pose话题（RViz兼容）
-        console.log('[Navigation] 发布到话题: /goal_pose')
-        console.log('[Navigation] 消息类型: geometry_msgs/msg/PoseStamped')
+        // console.log('[Navigation] 发布到话题: /goal_pose')
+        // console.log('[Navigation] 消息类型: geometry_msgs/msg/PoseStamped')
         const publishResult = rosbridge.publish('/goal_pose', 'geometry_msgs/msg/PoseStamped', goalMsg)
-        console.log('[Navigation] rosbridge.publish返回结果:', publishResult)
+        // console.log('[Navigation] rosbridge.publish返回结果:', publishResult)
 
         if (publishResult) {
           const yawDegrees = (Math.atan2(2 * (orientation.w * orientation.z + orientation.x * orientation.y),
@@ -2414,10 +2403,10 @@ export default {
 
       try {
         // 发布到标准的initialpose话题（RViz兼容）
-        console.log('[Navigation] 发布到话题: /initialpose')
-        console.log('[Navigation] 消息类型: geometry_msgs/msg/PoseWithCovarianceStamped')
+        // console.log('[Navigation] 发布到话题: /initialpose')
+        // console.log('[Navigation] 消息类型: geometry_msgs/msg/PoseWithCovarianceStamped')
         const publishResult = rosbridge.publish('/initialpose', 'geometry_msgs/msg/PoseWithCovarianceStamped', poseMsg)
-        console.log('[Navigation] rosbridge.publish返回结果:', publishResult)
+        // console.log('[Navigation] rosbridge.publish返回结果:', publishResult)
 
         if (publishResult) {
           const yawDegrees = (Math.atan2(2 * (orientation.w * orientation.z + orientation.x * orientation.y),
@@ -2579,8 +2568,9 @@ export default {
           })
           console.log('位置设置已更新:', settings)
           if (settings.trajectoryLength !== undefined) {
-            // 更新轨迹长度
-            updateTrajectoryLength(settings.trajectoryLength)
+            // 更新轨迹长度（夹取到10~100）
+            const clamped = Math.max(10, Math.min(100, settings.trajectoryLength))
+            updateTrajectoryLength(clamped)
           }
           console.log('位置设置已更新:', settings)
           break
@@ -2596,8 +2586,13 @@ export default {
           break
           
         case 'trajectory':
-          // 更新轨迹设置
-          console.log('更新轨迹长度:', settings.length)
+          // 更新轨迹长度设置（从控制面板单独通道传入）
+          if (settings.trajectoryLength !== undefined) {
+            const clamped = Math.max(10, Math.min(100, settings.trajectoryLength))
+            persistentSettings.position.trajectoryLength = clamped
+            updateTrajectoryLength(clamped)
+            console.log('更新轨迹长度:', clamped)
+          }
           break
       }
     }

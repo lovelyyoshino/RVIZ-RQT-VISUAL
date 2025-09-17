@@ -202,7 +202,7 @@
           <el-slider
             v-model="trajectoryLength"
             :min="10"
-            :max="1000"
+            :max="100"
             :step="10"
             @change="updateTrajectorySettings"
             show-input
@@ -598,9 +598,10 @@ export default {
     }
 
     const updateTrajectorySettings = () => {
+      // 统一使用 trajectoryLength 字段名，便于场景侧消费
       emit('settings-update', {
         type: 'trajectory',
-        length: trajectoryLength.value
+        trajectoryLength: Math.max(10, Math.min(100, trajectoryLength.value))
       })
     }
 

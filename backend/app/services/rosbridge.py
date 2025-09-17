@@ -224,6 +224,10 @@ class RosbridgeService:
                 await self._handle_subscribe(client_id, message)
             elif op == 'unsubscribe':
                 await self._handle_unsubscribe(client_id, message)
+            elif op == 'advertise':
+                await self._handle_advertise(message)
+            elif op == 'unadvertise':
+                await self._handle_unadvertise(message)
             elif op == 'publish':
                 await self._handle_publish(message)
             elif op == 'get_topics':
@@ -1255,16 +1259,169 @@ class RosbridgeService:
         if info and topic in info.subscribed_topics:
             info.subscribed_topics.remove(topic)
     
+    async def _handle_advertise(self, message: dict):
+        """处理前端声明发布者"""
+        topic = message.get('topic')
+        msg_type = message.get('type')
+        if not topic or not msg_type:
+            logger.error("❌ Invalid advertise request: missing topic or type")
+            return
+
+        try:
+            await self._ensure_publisher(topic, msg_type)
+            logger.info(f"✅ Advertised publisher for {topic} ({msg_type})")
+        except Exception as e:
+            logger.error(f"❌ Failed to advertise {topic}: {e}")
+
+    async def _handle_unadvertise(self, message: dict):
+        """处理前端取消发布者"""
+        topic = message.get('topic')
+        if not topic:
+            return
+        try:
+            if topic in self.publishers:
+                try:
+                    # rclpy Publisher 无显式销毁方法，随节点销毁；这里只移除引用
+                    del self.publishers[topic]
+                except Exception as e:
+                    logger.debug(f"Error removing publisher ref for {topic}: {e}")
+            logger.info(f"🗑️ Unadvertised publisher for {topic}")
+        except Exception as e:
+            logger.error(f"Failed to unadvertise {topic}: {e}")
+
     async def _handle_publish(self, message: dict):
         """处理发布消息"""
         topic = message.get('topic')
         msg_data = message.get('msg')
-        
-        if not topic or not msg_data:
+        msg_type = message.get('type')
+
+        if not topic or msg_data is None:
+            logger.error("❌ Invalid publish: missing topic or msg")
             return
-            
-        # 这里实现消息发布逻辑
-        logger.info(f"Publishing to {topic}: {msg_data}")
+
+        try:
+            # 确保publisher存在（需要消息类型）
+            if topic not in self.publishers:
+                if not msg_type:
+                    logger.error(f"❌ Publish to {topic} without prior advertise and no type provided")
+                    return
+                await self._ensure_publisher(topic, msg_type)
+
+            publisher_record = self.publishers.get(topic)
+            if not publisher_record:
+                logger.error(f"❌ Publisher for {topic} not available")
+                return
+
+            msg_class = publisher_record['msg_class']
+            ros_msg = self._dict_to_message(msg_class, msg_data)
+            if ros_msg is None:
+                logger.error(f"❌ Failed to convert message for {topic} to {msg_class.__name__}")
+                return
+
+            publisher = publisher_record['publisher']
+            publisher.publish(ros_msg)
+            logger.info(f"📤 Published {msg_class.__name__} to {topic}")
+        except Exception as e:
+            logger.error(f"❌ Error publishing to {topic}: {e}", exc_info=True)
+
+    async def _ensure_publisher(self, topic: str, msg_type: str):
+        """创建或返回已存在的Publisher"""
+        if not self.node:
+            raise RuntimeError("ROS2 node not initialized")
+
+        if topic in self.publishers:
+            return
+
+        msg_class = self._get_message_class(msg_type)
+        if msg_class is None:
+            raise RuntimeError(f"Unsupported message type: {msg_type}")
+
+        # 针对一次性关键话题（/initialpose, /goal_pose）使用 TRANSIENT_LOCAL，便于后订阅者获取最后一次
+        use_transient_local = (
+            topic in ('/initialpose', '/goal_pose') or
+            (msg_type in (
+                'geometry_msgs/msg/PoseStamped',
+                'geometry_msgs/msg/PoseWithCovarianceStamped'
+            ) and topic in ('/initialpose', '/goal_pose'))
+        )
+
+        qos_profile = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL if use_transient_local else QoSDurabilityPolicy.VOLATILE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1 if use_transient_local else 10
+        )
+
+        publisher = self.node.create_publisher(msg_class, topic, qos_profile)
+        self.publishers[topic] = {
+            'publisher': publisher,
+            'msg_class': msg_class,
+            'msg_type': msg_type
+        }
+        logger.info(f"🆕 Created publisher for {topic} ({msg_type})")
+
+    def _dict_to_message(self, msg_class, data: dict):
+        """将字典递归转换为ROS消息实例（按公开属性名赋值，兼容私有__slots__）。"""
+        try:
+            msg = msg_class()
+
+            def assign_by_public_fields(obj, value_dict):
+                if not isinstance(value_dict, dict):
+                    return
+                for key, val in value_dict.items():
+                    if not hasattr(obj, key):
+                        continue
+                    current_attr = getattr(obj, key)
+
+                    # 嵌套消息对象
+                    if hasattr(current_attr, '__slots__') and isinstance(val, dict):
+                        assign_by_public_fields(current_attr, val)
+                        continue
+
+                    # 若需要新建子对象（极少情况）
+                    if isinstance(val, dict) and hasattr(type(current_attr), '__slots__'):
+                        try:
+                            sub = type(current_attr)()
+                            assign_by_public_fields(sub, val)
+                            setattr(obj, key, sub)
+                            continue
+                        except Exception:
+                            pass
+
+                    # 列表/数组字段（如covariance）
+                    if isinstance(val, list):
+                        # 特殊处理协方差：必须是长度36的float序列
+                        if key == 'covariance':
+                            floats = [float(x) for x in val][:36]
+                            if len(floats) < 36:
+                                floats += [0.0] * (36 - len(floats))
+                            try:
+                                setattr(obj, key, floats)
+                            except Exception:
+                                # 最后兜底再次尝试直接设置list
+                                setattr(obj, key, floats)
+                            continue
+
+                        # 其他列表，尽量转float（数值型）后设置
+                        try:
+                            coerced = [float(x) if isinstance(x, (int, float)) else x for x in val]
+                            setattr(obj, key, coerced)
+                        except Exception:
+                            setattr(obj, key, val)
+                        continue
+
+                    # 基本类型
+                    try:
+                        setattr(obj, key, val)
+                    except Exception:
+                        pass
+
+            # 顶层赋值（包含header/pose等）
+            assign_by_public_fields(msg, data)
+            return msg
+        except Exception as e:
+            logger.error(f"Failed to build message {msg_class.__name__}: {e}", exc_info=True)
+            return None
     
     async def _handle_get_topics(self, client_id: str, request_id: str = None):
         """处理获取主题请求"""
