@@ -110,6 +110,7 @@
                   @pointcloud-change="onPointCloudChange"
                   @map-topic-change="onMapTopicChange"
                   @map-file-change="onMapFileChange"
+                  @map-files-change="onMapFilesChange"
                   @odom-topic-change="onOdomTopicChange"
                   @settings-update="onSettingsUpdate"
                   @camera-reset="onCameraReset"
@@ -321,6 +322,15 @@ export default {
       }
     }
 
+    const onMapFilesChange = ({ yamlFile, pgmFile }) => {
+      console.log(`地图文件对选择: ${yamlFile.name} + ${pgmFile.name}`)
+      if (scene3dRef.value && scene3dRef.value.loadMapFiles) {
+        scene3dRef.value.loadMapFiles(yamlFile, pgmFile)
+      } else {
+        ElMessage.warning('3D场景未就绪，无法加载地图文件')
+      }
+    }
+
     const onOdomTopicChange = (topicName) => {
       console.log(`里程计主题切换: ${topicName}`)
       onTopicSubscribe(topicName, 'nav_msgs/msg/Odometry')
@@ -389,6 +399,7 @@ export default {
       onPointCloudChange,
       onMapTopicChange,
       onMapFileChange,
+      onMapFilesChange,
       onOdomTopicChange,
       onSettingsUpdate,
       onCameraReset,

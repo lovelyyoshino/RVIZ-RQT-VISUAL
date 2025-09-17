@@ -136,7 +136,13 @@ export default {
 
         // 添加坐标系标签
         createCoordinateSystemLabels()
-        
+
+        // 创建机器人模型
+        createRobotModel()
+
+        // 订阅位置主题以更新机器人模型
+        subscribeToPositionTopics()
+
         // 窗口大小调整监听
         window.addEventListener('resize', onWindowResize)
         
@@ -152,9 +158,7 @@ export default {
         console.log('- X轴：向前（红色）')
         console.log('- Y轴：向左（绿色）')
         console.log('- Z轴：向上（蓝色）')
-        console.log('- 地图在XY平面，Z=0')
-        console.log('- 点云Z轴表示高程')
-        console.log('- 默认相机俯视XY平面')
+        console.log('机器人模型已创建，等待里程计数据...')
         
       } catch (error) {
         console.error('Failed to initialize 3D scene:', error)
@@ -167,53 +171,215 @@ export default {
      */
     const createCoordinateSystemLabels = () => {
       try {
-        // 创建文本材质
-        const canvas = document.createElement('canvas')
-        const context = canvas.getContext('2d')
-        canvas.width = 64
-        canvas.height = 64
+        // 为每个标签创建独立的canvas
+        const createLabelSprite = (text, color, position) => {
+          const canvas = document.createElement('canvas')
+          const context = canvas.getContext('2d')
+          canvas.width = 64
+          canvas.height = 64
 
-        // X轴标签 (红色)
-        context.clearRect(0, 0, 64, 64)
-        context.fillStyle = '#FF0000'
-        context.font = 'Bold 24px Arial'
-        context.fillText('X', 20, 40)
-        const xTexture = new THREE.CanvasTexture(canvas)
-        const xMaterial = new THREE.SpriteMaterial({ map: xTexture })
-        const xSprite = new THREE.Sprite(xMaterial)
-        xSprite.position.set(2.5, 0, 0)
-        xSprite.scale.set(0.5, 0.5, 1)
+          context.clearRect(0, 0, 64, 64)
+          context.fillStyle = color
+          context.font = 'Bold 24px Arial'
+          context.textAlign = 'center'
+          context.fillText(text, 32, 40)
+
+          const texture = new THREE.CanvasTexture(canvas)
+          const material = new THREE.SpriteMaterial({ map: texture })
+          const sprite = new THREE.Sprite(material)
+          sprite.position.copy(position)
+          sprite.scale.set(0.5, 0.5, 1)
+          return sprite
+        }
+
+        // X轴标签 (红色) - 水平方向
+        const xSprite = createLabelSprite('X', '#FF0000', new THREE.Vector3(2.5, 0, 0))
         scene.add(xSprite)
 
-        // Y轴标签 (绿色)
-        context.clearRect(0, 0, 64, 64)
-        context.fillStyle = '#00FF00'
-        context.font = 'Bold 24px Arial'
-        context.fillText('Y', 20, 40)
-        const yTexture = new THREE.CanvasTexture(canvas)
-        const yMaterial = new THREE.SpriteMaterial({ map: yTexture })
-        const ySprite = new THREE.Sprite(yMaterial)
-        ySprite.position.set(0, 2.5, 0)
-        ySprite.scale.set(0.5, 0.5, 1)
+        // Y轴标签 (绿色) - 向上方向
+        const ySprite = createLabelSprite('Y', '#00FF00', new THREE.Vector3(0, 2.5, 0))
         scene.add(ySprite)
 
-        // Z轴标签 (蓝色)
-        context.clearRect(0, 0, 64, 64)
-        context.fillStyle = '#0000FF'
-        context.font = 'Bold 24px Arial'
-        context.fillText('Z', 20, 40)
-        const zTexture = new THREE.CanvasTexture(canvas)
-        const zMaterial = new THREE.SpriteMaterial({ map: zTexture })
-        const zSprite = new THREE.Sprite(zMaterial)
-        zSprite.position.set(0, 0, 2.5)
-        zSprite.scale.set(0.5, 0.5, 1)
+        // Z轴标签 (蓝色) - 深度方向
+        const zSprite = createLabelSprite('Z', '#0000FF', new THREE.Vector3(0, 0, 2.5))
         scene.add(zSprite)
 
         console.log('坐标系标签已创建')
+        console.log('- X轴 (红色): 水平向右')
+        console.log('- Y轴 (绿色): 垂直向上')
+        console.log('- Z轴 (蓝色): 深度向前')
       } catch (error) {
         console.warn('创建坐标系标签失败:', error)
       }
     }
+
+    /**
+     * 创建机器人模型
+     */
+    let robotModel = null
+    const createRobotModel = () => {
+      try {
+        // 创建机器人组合体
+        robotModel = new THREE.Group()
+
+        // 机器人底盘 (长方体)
+        const chassisGeometry = new THREE.BoxGeometry(1.0, 0.6, 0.3)
+        const chassisMaterial = new THREE.MeshLambertMaterial({ color: 0x4CAF50 })
+        const chassis = new THREE.Mesh(chassisGeometry, chassisMaterial)
+        chassis.position.set(0, 0, 0.15)
+        robotModel.add(chassis)
+
+        // 机器人头部/传感器 (圆柱体)
+        const headGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.2)
+        const headMaterial = new THREE.MeshLambertMaterial({ color: 0x2196F3 })
+        const head = new THREE.Mesh(headGeometry, headMaterial)
+        head.position.set(0.3, 0, 0.4)
+        robotModel.add(head)
+
+        // 方向指示箭头
+        const arrowGeometry = new THREE.ConeGeometry(0.1, 0.3)
+        const arrowMaterial = new THREE.MeshLambertMaterial({ color: 0xFF5722 })
+        const arrow = new THREE.Mesh(arrowGeometry, arrowMaterial)
+        arrow.position.set(0.6, 0, 0.15)
+        arrow.rotation.z = -Math.PI / 2
+        robotModel.add(arrow)
+
+        // 轮子 (4个圆柱体)
+        const wheelGeometry = new THREE.CylinderGeometry(0.15, 0.15, 0.1)
+        const wheelMaterial = new THREE.MeshLambertMaterial({ color: 0x424242 })
+
+        const wheelPositions = [
+          { x: 0.35, y: 0.35, z: 0.15 },
+          { x: 0.35, y: -0.35, z: 0.15 },
+          { x: -0.35, y: 0.35, z: 0.15 },
+          { x: -0.35, y: -0.35, z: 0.15 }
+        ]
+
+        wheelPositions.forEach(pos => {
+          const wheel = new THREE.Mesh(wheelGeometry, wheelMaterial)
+          wheel.position.set(pos.x, pos.y, pos.z)
+          wheel.rotation.x = Math.PI / 2
+          robotModel.add(wheel)
+        })
+
+        // 机器人坐标轴 (小一点的轴)
+        const robotAxes = new THREE.AxesHelper(0.5)
+        robotAxes.position.set(0, 0, 0.3)
+        robotModel.add(robotAxes)
+
+        // 初始位置
+        robotModel.position.set(0, 0, 0)
+        robotModel.userData = {
+          type: 'robot',
+          lastUpdate: Date.now()
+        }
+
+        scene.add(robotModel)
+        console.log('机器人模型已创建')
+
+      } catch (error) {
+        console.warn('创建机器人模型失败:', error)
+      }
+    }
+
+    /**
+     * 更新机器人位置
+     */
+    const updateRobotPosition = (position, orientation = null) => {
+      if (!robotModel) return
+
+      try {
+        // 更新位置 - 确保使用正确的坐标映射，支持下划线前缀
+        // X: 水平 (前后), Y: 水平 (左右), Z: 高度
+        const x = position.x || position._x || 0
+        const y = position.y || position._y || 0
+        const z = position.z || position._z || 0
+
+        robotModel.position.set(x, y, z + 0.15)  // 稍微抬高避免与地面重合
+
+        // 更新方向，支持下划线前缀
+        if (orientation) {
+          robotModel.quaternion.set(
+            orientation.x || orientation._x || 0,
+            orientation.y || orientation._y || 0,
+            orientation.z || orientation._z || 0,
+            orientation.w || orientation._w || 1
+          )
+        }
+
+        robotModel.userData.lastUpdate = Date.now()
+        console.log(`机器人位置更新: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`)
+
+      } catch (error) {
+        console.warn('更新机器人位置失败:', error)
+      }
+    }
+
+    /**
+     * 订阅位置主题更新机器人位置 (与位置信息面板保持一致)
+     */
+    const subscribeToPositionTopics = () => {
+      console.log('[Scene3D] 开始订阅位置主题以更新机器人模型...')
+
+      // 与位置信息面板完全相同的主题列表
+      const positionTopics = [
+        { topic: '/odom', type: 'nav_msgs/msg/Odometry' },
+        { topic: '/robot_pose', type: 'geometry_msgs/msg/PoseStamped' },
+        { topic: '/amcl_pose', type: 'geometry_msgs/msg/PoseWithCovarianceStamped' },
+        { topic: '/pose', type: 'geometry_msgs/msg/PoseStamped' },
+        { topic: '/localization', type: 'nav_msgs/msg/Odometry' },
+        { topic: '/localization_2d', type: 'nav_msgs/msg/Odometry' }
+      ]
+
+      positionTopics.forEach(({ topic, type }) => {
+        console.log(`[Scene3D] 尝试订阅位置主题: ${topic} (${type})`)
+
+        try {
+          rosbridge.subscribe(topic, type, (message) => {
+            console.log(`[Scene3D] 收到${topic}位置数据，更新机器人模型`)
+
+            let position = null
+            let orientation = null
+
+            // 根据消息类型解析位置信息 (兼容下划线前缀格式)
+            if (type === 'nav_msgs/msg/Odometry') {
+              const pose = message.pose || message._pose
+              if (pose && (pose.pose || pose._pose)) {
+                const poseData = pose.pose || pose._pose || pose
+                position = poseData.position || poseData._position
+                orientation = poseData.orientation || poseData._orientation
+              }
+            } else if (type === 'geometry_msgs/msg/PoseStamped') {
+              const poseMsg = message.pose || message._pose
+              if (poseMsg) {
+                position = poseMsg.position || poseMsg._position
+                orientation = poseMsg.orientation || poseMsg._orientation
+              }
+            } else if (type === 'geometry_msgs/msg/PoseWithCovarianceStamped') {
+              const pose = message.pose || message._pose
+              if (pose && (pose.pose || pose._pose)) {
+                const poseData = pose.pose || pose._pose || pose
+                position = poseData.position || poseData._position
+                orientation = poseData.orientation || poseData._orientation
+              }
+            }
+
+            // 使用updateRobotPosition函数更新机器人位置
+            if (position) {
+              updateRobotPosition(position, orientation)
+              console.log(`[Scene3D] 机器人位置已更新: (${position.x?.toFixed(3)}, ${position.y?.toFixed(3)}, ${position.z?.toFixed(3)})`)
+            } else {
+              console.warn(`[Scene3D] 无法从${topic}解析位置信息`, message)
+            }
+          })
+
+          console.log(`[Scene3D] ✅ 成功订阅位置主题: ${topic}`)
+        } catch (error) {
+          console.error(`[Scene3D] 订阅${topic}失败:`, error)
+        }
+      })
+    }
+
 
     /**
      * 渲染循环
@@ -1079,37 +1245,19 @@ export default {
             const angle = angleMin + i * angleIncrement
             const range = ranges[i]
 
-            // 过滤有效距离值 - 完全按照flask_ros的标准
+            // 过滤有效距离值
             if (range >= rangeMin && range <= rangeMax && isFinite(range)) {
-              // 极坐标转笛卡尔坐标 - 完全按照flask_ros/map-2d.js的drawLaserScan实现
-              // 第730-736行的核心逻辑：
-              //
-              // const laserAngle = scan.angle_min + index * scan.angle_increment;
-              // const worldAngle = this.robotPose.theta + laserAngle;
-              // const endX = this.robotPose.x + range * Math.cos(worldAngle);
-              // const endY = this.robotPose.y + range * Math.sin(worldAngle);
-
-              // 激光雷达坐标转换 - 修复显示为一条线的问题
-              //
-              // 问题分析：显示为一条线说明角度计算有问题
-              // 让我直接使用标准的极坐标转换，不考虑机器人姿态
-
-              // 极坐标转笛卡尔坐标 - 参考flask_ros的实现
-              // 问题分析：可能需要考虑机器人朝向，但先尝试简单的角度偏移
-              //
-              // 检查是否需要角度偏移：如果激光雷达的0度不是正前方
-              // 尝试添加90度偏移，使角度分布更合理
-              const adjustedAngle = angle + Math.PI / 2  // 添加90度偏移
-
-              const x = range * Math.cos(adjustedAngle)
-              const y = range * Math.sin(adjustedAngle)
+              // LaserScan标准坐标转换：极坐标转笛卡尔坐标
+              // angle_min通常是-π（-180°），angle_max通常是π（180°）
+              // 激光雷达坐标系：X轴向前，Y轴向左
+              const x = range * Math.cos(angle)
+              const y = range * Math.sin(angle)
               const z = 0
 
               // 调试：打印关键角度的点
               const angleDeg = angle * 180 / Math.PI
-              const adjustedAngleDeg = adjustedAngle * 180 / Math.PI
-              if (validPoints < 10 || Math.abs(angleDeg % 90) < 2) {
-                console.log(`[LaserScan] 点${validPoints}: 原始角度=${angleDeg.toFixed(1)}° (弧度${angle.toFixed(4)}), 调整后角度=${adjustedAngleDeg.toFixed(1)}°, 距离=${range.toFixed(2)}m, 坐标=(${x.toFixed(2)}, ${y.toFixed(2)})`)
+              if (validPoints < 10) {
+                console.log(`[LaserScan] 点${validPoints}: 角度=${angleDeg.toFixed(1)}°, 距离=${range.toFixed(2)}m, 坐标=(${x.toFixed(2)}, ${y.toFixed(2)})`)
               }
 
               positions.push(x, y, z)
@@ -1129,11 +1277,15 @@ export default {
                 }
               }
 
-              // 根据距离着色：近距离红色，远距离蓝色
-              const normalizedRange = (range - rangeMin) / (rangeMax - rangeMin)
-              const hue = (1 - normalizedRange) * 240 / 360  // 从红到蓝
-              const color = new THREE.Color().setHSL(hue, 0.8, 0.6)
-              colors.push(color.r, color.g, color.b)
+              // 改进的颜色方案：更明显的颜色，基于距离
+              const normalizedRange = Math.min(Math.max((range - rangeMin) / (rangeMax - rangeMin), 0), 1)
+
+              // 方案1：简单的红绿渐变（近红远绿）
+              const red = 1.0 - normalizedRange  // 近距离红色
+              const green = normalizedRange      // 远距离绿色
+              const blue = 0.2                   // 固定蓝色分量
+
+              colors.push(red, green, blue)
 
               validPoints++
             }
@@ -1178,9 +1330,10 @@ export default {
         geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
 
         const material = new THREE.PointsMaterial({
-          size: 0.1,  // 增大点的大小以便更好地看到
+          size: 0.15,  // 进一步增大点的大小
           vertexColors: true,
-          sizeAttenuation: true
+          sizeAttenuation: false,  // 不根据距离缩放，保持固定大小
+          alphaTest: 0.5
         })
 
         const laserScan = new THREE.Points(geometry, material)
@@ -1341,6 +1494,9 @@ export default {
         const position = message.pose.pose.position
         const orientation = message.pose.pose.orientation
 
+        // 更新机器人模型位置
+        updateRobotPosition(position, orientation)
+
         // 创建位置指示器（箭头）
         const arrowGeometry = new THREE.ConeGeometry(0.2, 1, 8)
         const arrowMaterial = new THREE.MeshLambertMaterial({ color: 0x00ff00, transparent: true, opacity: 0.8 })
@@ -1421,6 +1577,9 @@ export default {
 
         const position = message.pose.position
         const orientation = message.pose.orientation
+
+        // 更新机器人模型位置
+        updateRobotPosition(position, orientation)
 
         // 创建位置指示器（坐标轴）
         const axesHelper = new THREE.AxesHelper(1)
@@ -1761,6 +1920,25 @@ export default {
       }
     }
 
+    const loadMapFiles = async (yamlFile, pgmFile) => {
+      console.log(`[Scene3D] 同时加载地图文件: ${yamlFile.name} + ${pgmFile.name}`)
+
+      try {
+        // 先加载YAML配置
+        const mapConfig = await loadMapYaml(yamlFile)
+        console.log(`[Scene3D] YAML配置加载完成:`, mapConfig)
+
+        // 再用配置加载PGM文件
+        await loadMapPgmWithConfig(pgmFile, mapConfig)
+
+        ElMessage.success(`地图加载成功: ${yamlFile.name} + ${pgmFile.name}`)
+
+      } catch (error) {
+        console.error(`[Scene3D] 地图文件对加载失败:`, error)
+        ElMessage.error(`地图文件对加载失败: ${error.message}`)
+      }
+    }
+
     const loadMapYaml = async (file) => {
       console.log(`[Scene3D] 解析YAML地图配置文件`)
       
@@ -2077,7 +2255,7 @@ export default {
         
         // 创建Three.js纹理
         const texture = new THREE.CanvasTexture(canvas)
-        texture.flipY = false  // 不翻转Y轴，因为我们已经在位置计算中处理了坐标系转换
+        texture.flipY = true  // 翻转Y轴以匹配ROS坐标系
         texture.wrapS = THREE.ClampToEdgeWrapping
         texture.wrapT = THREE.ClampToEdgeWrapping
         
@@ -2471,6 +2649,7 @@ export default {
       updateSettings,
       setViewPreset,
       loadMapFile,
+      loadMapFiles,
       fitCameraToPointCloud,
       fitCameraToMap,
       addDebugInfo,

@@ -97,7 +97,7 @@
           <div class="file-controls">
             <el-input
               v-model="mapFilePath"
-              placeholder="选择.yaml或.pgm文件"
+              placeholder="选择.yaml和.pgm文件（可多选）"
               size="small"
               readonly
             />
@@ -111,6 +111,7 @@
             type="file"
             accept=".yaml,.yml,.pgm"
             @change="onFileSelected"
+            multiple
             style="display: none"
           />
         </div>
@@ -425,11 +426,30 @@ export default {
     }
 
     const onFileSelected = (event) => {
-      const file = event.target.files[0]
-      if (file) {
+      const files = Array.from(event.target.files)
+      if (files.length === 0) return
+
+      // 分类文件类型
+      const yamlFiles = files.filter(f => f.name.toLowerCase().endsWith('.yaml') || f.name.toLowerCase().endsWith('.yml'))
+      const pgmFiles = files.filter(f => f.name.toLowerCase().endsWith('.pgm'))
+
+      if (files.length === 1) {
+        // 单文件选择，按原来的逻辑处理
+        const file = files[0]
         mapFilePath.value = file.name
         emit('map-file-change', file)
         ElMessage.success(`已选择地图文件: ${file.name}`)
+      } else if (yamlFiles.length === 1 && pgmFiles.length === 1) {
+        // 同时选择了YAML和PGM文件
+        const yamlFile = yamlFiles[0]
+        const pgmFile = pgmFiles[0]
+
+        mapFilePath.value = `${yamlFile.name} + ${pgmFile.name}`
+        emit('map-files-change', { yamlFile, pgmFile })
+        ElMessage.success(`已选择地图文件对: ${yamlFile.name} + ${pgmFile.name}`)
+      } else {
+        // 多文件但不是正确的组合
+        ElMessage.warning('请选择一个YAML文件和一个PGM文件，或单独选择一个文件')
       }
     }
 
