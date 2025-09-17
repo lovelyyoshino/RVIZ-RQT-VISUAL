@@ -61,7 +61,34 @@ export default {
     const visualizationObjects = new Map()
     const rosSubscriptions = new Map()
     const plugins = new Map()
-    
+
+    // 持久化设置存储
+    const persistentSettings = {
+      laser: {
+        showLaserPoints: true,
+        showLaserLines: true,
+        showIntensity: false,
+        pointSize: 0.15
+      },
+      pointcloud: {
+        pointSize: 0.05,
+        opacity: 0.8,
+        showIntensity: false
+      },
+      map: {
+        showMap: true,
+        opacity: 0.8,
+        showGrid: false,
+        showOrigin: true
+      },
+      position: {
+        showRobotPose: true,
+        showTrajectory: true,
+        showCoordinateFrame: true,
+        trajectoryLength: 100
+      }
+    }
+
     // 地图相关对象
     const mapMesh = ref(null)
     const mapTexture = ref(null)
@@ -860,6 +887,27 @@ export default {
 
         console.log(`[Scene3D] 已清除可视化对象: ${topic}, 剩余对象数: ${visualizationObjects.size}`)
       }
+
+      // 同时检查并清除关联的激光连线对象
+      const linesObject = visualizationObjects.get(topic + '_lines')
+      if (linesObject) {
+        console.log(`[Scene3D] 清除激光连线对象: ${topic}_lines`)
+        const cleanupObject = (obj) => {
+          if (obj.geometry) {
+            obj.geometry.dispose()
+          }
+          if (obj.material) {
+            if (Array.isArray(obj.material)) {
+              obj.material.forEach(mat => mat.dispose())
+            } else {
+              obj.material.dispose()
+            }
+          }
+        }
+        cleanupObject(linesObject)
+        scene.remove(linesObject)
+        visualizationObjects.delete(topic + '_lines')
+      }
     }
 
     // 清除所有可视化对象（但保留地图）
@@ -1069,20 +1117,33 @@ export default {
             box.max.z - box.min.z
           )
           
+          // 应用持久化设置创建材质
+          // 强度显示优先使用激光设置，如果没有则使用点云设置
+          const showIntensity = persistentSettings.laser.showIntensity !== undefined
+            ? persistentSettings.laser.showIntensity
+            : persistentSettings.pointcloud.showIntensity
+
           const material = new THREE.PointsMaterial({
-            size: Math.max(0.02, size / 500), // 根据点云尺寸调整点大小
-            vertexColors: true,
-            sizeAttenuation: true
+            size: persistentSettings.pointcloud.pointSize || Math.max(0.02, size / 500),
+            vertexColors: showIntensity,
+            sizeAttenuation: true,
+            opacity: persistentSettings.pointcloud.opacity || 1.0,
+            transparent: (persistentSettings.pointcloud.opacity || 1.0) < 1.0
           })
-          
+
           const pointCloud = new THREE.Points(geometry, material)
-          pointCloud.userData = { 
-            topic, 
-            messageType: 'sensor_msgs/msg/PointCloud2', 
+          pointCloud.userData = {
+            topic,
+            messageType: 'sensor_msgs/msg/PointCloud2',
             pointCount: pointsProcessed,
             originalMessage: message
           }
-          
+
+          // 根据激光设置决定是否显示点云（当作为3D激光时）
+          pointCloud.visible = persistentSettings.laser.showLaserPoints !== undefined
+            ? persistentSettings.laser.showLaserPoints
+            : true
+
           scene.add(pointCloud)
           visualizationObjects.set(topic, pointCloud)
           
@@ -1371,22 +1432,57 @@ export default {
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
         geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
 
-        const material = new THREE.PointsMaterial({
-          size: 0.15,  // 进一步增大点的大小
-          vertexColors: true,
+        // 创建激光点对象，应用持久化设置
+        const pointMaterial = new THREE.PointsMaterial({
+          size: persistentSettings.laser.pointSize || 0.15,
+          vertexColors: persistentSettings.laser.showIntensity,
           sizeAttenuation: false,  // 不根据距离缩放，保持固定大小
           alphaTest: 0.5
         })
 
-        const laserScan = new THREE.Points(geometry, material)
-        laserScan.userData = {
+        const laserPoints = new THREE.Points(geometry, pointMaterial)
+        laserPoints.userData = {
           topic,
           messageType: 'sensor_msgs/msg/LaserScan',
+          type: 'laser_points',
           pointCount: positions.length / 3
         }
+        laserPoints.visible = persistentSettings.laser.showLaserPoints
 
-        scene.add(laserScan)
-        visualizationObjects.set(topic, laserScan)
+        // 创建激光连线对象
+        const lineGeometry = new THREE.BufferGeometry()
+        const linePositions = []
+
+        // 创建从原点到每个激光点的连线
+        for (let i = 0; i < positions.length; i += 3) {
+          // 原点到激光点的线段
+          linePositions.push(0, 0, 0)  // 原点
+          linePositions.push(positions[i], positions[i + 1], positions[i + 2])  // 激光点
+        }
+
+        lineGeometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3))
+
+        const lineMaterial = new THREE.LineBasicMaterial({
+          color: 0x00ff00,
+          opacity: 0.3,
+          transparent: true
+        })
+
+        const laserLines = new THREE.LineSegments(lineGeometry, lineMaterial)
+        laserLines.userData = {
+          topic,
+          messageType: 'sensor_msgs/msg/LaserScan',
+          type: 'laser_lines',
+          pointCount: positions.length / 3
+        }
+        laserLines.visible = persistentSettings.laser.showLaserLines
+
+        scene.add(laserPoints)
+        scene.add(laserLines)
+
+        // 用点对象作为主要的可视化对象存储
+        visualizationObjects.set(topic, laserPoints)
+        visualizationObjects.set(topic + '_lines', laserLines)
 
         // 只在第一次成功时显示详细日志和消息
         if (!updateLaserScan._firstLogged) {
@@ -1578,6 +1674,7 @@ export default {
             linewidth: 2
           })
           const trajectoryLine = new THREE.Line(trajectoryGeometry, trajectoryMaterial)
+          trajectoryLine.userData = { type: 'trajectory' }  // 添加类型标识
 
           const group = new THREE.Group()
           group.add(arrow)
@@ -1586,6 +1683,7 @@ export default {
           group.userData = {
             topic,
             messageType: 'nav_msgs/msg/Odometry',
+            type: 'robot_pose',  // 添加类型标识
             position: { x: position.x, y: position.y, z: position.z },
             trajectoryLength: trajectoryPoints.length
           }
@@ -1807,24 +1905,145 @@ export default {
       // 在3D场景中切换激光显示方式
     }
 
+    const updateRobotTrajectory = () => {
+      // 更新所有机器人位姿对象的轨迹线
+      visualizationObjects.forEach((object, topic) => {
+        if (object.userData?.type === 'robot_pose') {
+          // 找到轨迹线并更新
+          object.children.forEach(child => {
+            if (child.userData?.type === 'trajectory') {
+              // 重新创建轨迹几何体
+              if (trajectoryPoints.length > 1) {
+                child.geometry.dispose()
+                child.geometry = new THREE.BufferGeometry().setFromPoints(trajectoryPoints)
+              }
+            }
+          })
+        }
+      })
+    }
+
+    const updateTrajectoryLength = (newLength) => {
+      // 限制轨迹点数量
+      if (trajectoryPoints.length > newLength) {
+        trajectoryPoints.splice(0, trajectoryPoints.length - newLength)
+        // 重新创建轨迹线
+        updateRobotTrajectory()
+      }
+    }
+
     const updateSettings = (settings) => {
       console.log('更新3D场景设置:', settings)
-      
+
+      // 首先保存设置到持久化存储
+      if (settings.type && persistentSettings[settings.type]) {
+        Object.assign(persistentSettings[settings.type], settings)
+      }
+
       switch (settings.type) {
+        case 'laser':
+          // 更新激光雷达设置
+          visualizationObjects.forEach((object, key) => {
+            // 2D激光雷达设置
+            if (object.userData?.messageType === 'sensor_msgs/msg/LaserScan') {
+              // 激光点显示/隐藏
+              if (settings.showLaserPoints !== undefined && object.userData?.type === 'laser_points') {
+                object.visible = settings.showLaserPoints
+              }
+              // 激光连线显示/隐藏
+              if (settings.showLaserLines !== undefined && object.userData?.type === 'laser_lines') {
+                object.visible = settings.showLaserLines
+              }
+              // 点大小调整
+              if (settings.pointSize !== undefined && object.material && object.userData?.type === 'laser_points') {
+                object.material.size = settings.pointSize
+                object.material.needsUpdate = true
+              }
+              // 强度显示
+              if (settings.showIntensity !== undefined && object.material && object.userData?.type === 'laser_points') {
+                // 直接创建新材质以确保vertexColors变化生效
+                const oldMaterial = object.material
+                const newMaterial = new THREE.PointsMaterial({
+                  size: oldMaterial.size,
+                  vertexColors: settings.showIntensity,
+                  sizeAttenuation: oldMaterial.sizeAttenuation,
+                  alphaTest: oldMaterial.alphaTest
+                })
+                object.material = newMaterial
+                oldMaterial.dispose()
+              }
+            }
+            // 3D点云激光设置
+            else if (object.userData?.messageType === 'sensor_msgs/msg/PointCloud2') {
+              // 激光点显示/隐藏（对3D点云生效）
+              if (settings.showLaserPoints !== undefined) {
+                object.visible = settings.showLaserPoints
+              }
+              // 强度显示（对3D点云生效）
+              if (settings.showIntensity !== undefined && object.material) {
+                // 直接创建新材质以确保vertexColors变化生效
+                const oldMaterial = object.material
+                const newMaterial = new THREE.PointsMaterial({
+                  size: oldMaterial.size,
+                  vertexColors: settings.showIntensity,
+                  sizeAttenuation: oldMaterial.sizeAttenuation,
+                  opacity: oldMaterial.opacity,
+                  transparent: oldMaterial.transparent
+                })
+                object.material = newMaterial
+                oldMaterial.dispose()
+              }
+            }
+          })
+          console.log('激光雷达设置已更新:', settings)
+          break
+
         case 'pointcloud':
           // 更新点云设置
-          if (settings.pointSize !== undefined) {
-            // 更新点云大小
-          }
-          if (settings.opacity !== undefined) {
-            // 更新点云透明度
-          }
+          visualizationObjects.forEach((object, topic) => {
+            if (object.userData?.messageType === 'sensor_msgs/msg/PointCloud2') {
+              if (settings.pointSize !== undefined && object.material) {
+                object.material.size = settings.pointSize
+                object.material.needsUpdate = true
+              }
+              if (settings.opacity !== undefined && object.material) {
+                object.material.opacity = settings.opacity
+                object.material.transparent = settings.opacity < 1.0
+                object.material.needsUpdate = true
+              }
+              if (settings.showIntensity !== undefined && object.material) {
+                // 直接创建新材质以确保vertexColors变化生效
+                const oldMaterial = object.material
+                const newMaterial = new THREE.PointsMaterial({
+                  size: oldMaterial.size,
+                  vertexColors: settings.showIntensity,
+                  sizeAttenuation: oldMaterial.sizeAttenuation,
+                  opacity: oldMaterial.opacity,
+                  transparent: oldMaterial.transparent
+                })
+                object.material = newMaterial
+                oldMaterial.dispose()
+              }
+            }
+          })
+          console.log('点云设置已更新:', settings)
           break
           
         case 'map':
           // 更新地图设置
+          if (settings.showMap !== undefined && mapMesh.value) {
+            mapMesh.value.visible = settings.showMap
+          }
           if (settings.opacity !== undefined && mapMesh.value) {
             mapMesh.value.material.opacity = settings.opacity
+            mapMesh.value.material.transparent = settings.opacity < 1.0
+            mapMesh.value.material.needsUpdate = true
+          }
+          if (settings.showGrid !== undefined && gridHelper) {
+            gridHelper.visible = settings.showGrid
+          }
+          if (settings.showOrigin !== undefined && axesHelper) {
+            axesHelper.visible = settings.showOrigin
           }
           if (settings.action === 'reset') {
             // 重置地图视图
@@ -1838,8 +2057,40 @@ export default {
               camera.lookAt(position)
             }
           }
+          console.log('地图设置已更新:', settings)
           break
-          
+
+        case 'position':
+          // 更新位置显示设置
+          visualizationObjects.forEach((object, topic) => {
+            // 机器人位姿显示
+            if (settings.showRobotPose !== undefined && object.userData?.type === 'robot_pose') {
+              object.visible = settings.showRobotPose
+            }
+            // 轨迹显示
+            if (settings.showTrajectory !== undefined) {
+              if (object.userData?.type === 'robot_pose') {
+                // 查找轨迹线子对象
+                object.children.forEach(child => {
+                  if (child.userData?.type === 'trajectory') {
+                    child.visible = settings.showTrajectory
+                  }
+                })
+              }
+            }
+            // 坐标系显示
+            if (settings.showCoordinateFrame !== undefined && object.userData?.type === 'coordinate_frame') {
+              object.visible = settings.showCoordinateFrame
+            }
+          })
+          console.log('位置设置已更新:', settings)
+          if (settings.trajectoryLength !== undefined) {
+            // 更新轨迹长度
+            updateTrajectoryLength(settings.trajectoryLength)
+          }
+          console.log('位置设置已更新:', settings)
+          break
+
         case 'scene':
           // 更新场景设置
           if (settings.showGrid !== undefined) {
@@ -2314,7 +2565,8 @@ export default {
           side: THREE.DoubleSide
         })
         
-        const mapMesh = new THREE.Mesh(geometry, material)
+        const mesh = new THREE.Mesh(geometry, material)
+        mapMesh.value = mesh  // 存储到reactive变量中
         
         // 计算地图在世界坐标系中的真实尺寸
         const mapWidthMeters = width * mapConfig.resolution
@@ -2371,7 +2623,7 @@ export default {
         const originOffsetY = -mapConfig.origin[1] / mapHeightWorld
         console.log(`[Scene3D] - 坐标原点(0,0)在地图中的相对位置: (${(originOffsetX*100).toFixed(1)}%, ${(originOffsetY*100).toFixed(1)}%)`)
 
-        mapMesh.position.set(mapX, mapY, mapZ)
+        mesh.position.set(mapX, mapY, mapZ)
 
         // 地图旋转 - 测试不同的旋转方案
         // 问题：地图显示悬浮且与坐标系不匹配
@@ -2379,9 +2631,9 @@ export default {
         // 如果地图悬浮，可能是旋转导致的
 
         // 方案1：不旋转，直接在XY平面
-        mapMesh.rotation.x = 0
-        mapMesh.rotation.y = 0
-        mapMesh.rotation.z = 0
+        mesh.rotation.x = 0
+        mesh.rotation.y = 0
+        mesh.rotation.z = 0
 
         console.log(`[Scene3D] ✅ 地图加载完成:`)
         console.log(`[Scene3D] - 几何中心位置: (${mapX.toFixed(3)}, ${mapY.toFixed(3)}, ${mapZ.toFixed(3)})`)
@@ -2398,7 +2650,7 @@ export default {
         console.log(`[Scene3D] - 世界坐标覆盖范围: X=[${worldMinX.toFixed(2)}, ${worldMaxX.toFixed(2)}], Y=[${worldMinY.toFixed(2)}, ${worldMaxY.toFixed(2)}]`)
         
         // 设置用户数据
-        mapMesh.userData = {
+        mesh.userData = {
           topic: 'loaded_map',
           messageType: 'loaded_map',
           filename: filename,
@@ -2409,11 +2661,11 @@ export default {
         }
         
         // 添加到场景
-        scene.add(mapMesh)
-        visualizationObjects.set('loaded_map', mapMesh)
+        scene.add(mesh)
+        visualizationObjects.set('loaded_map', mesh)
         
         // 自动调整相机以查看地图
-        fitCameraToMap(mapMesh)
+        fitCameraToMap(mesh)
         
         console.log(`[Scene3D] ✅ 地图加载成功:`)
         console.log(`[Scene3D] - 像素尺寸: ${width}x${height}`)

@@ -14,8 +14,8 @@
         <span class="value">{{ positionData.z.toFixed(3) }}m</span>
       </div>
       <div class="info-row">
-        <span class="label">精度:</span>
-        <span class="value" :class="accuracyClass">{{ positionData.accuracy.toFixed(2) }}m</span>
+        <span class="label">朝向:</span>
+        <span class="value">{{ positionData.yaw.toFixed(1) }}°</span>
       </div>
     </div>
 
@@ -41,7 +41,7 @@ export default {
       x: 0.0,
       y: 0.0,
       z: 0.0,
-      accuracy: 0.0,
+      yaw: 0.0, // 朝向角度（度）
       status: 'INACTIVE', // ACTIVE, INACTIVE, NO_DATA
       lastUpdate: null
     })
@@ -62,7 +62,7 @@ export default {
     const positionStatusText = computed(() => {
       switch (positionData.value.status) {
         case 'ACTIVE':
-          return `位置活跃 (精度: ${positionData.value.accuracy.toFixed(2)}m)`
+          return '位置活跃'
         case 'INACTIVE':
           return '位置不活跃'
         case 'NO_DATA':
@@ -70,13 +70,6 @@ export default {
         default:
           return '位置未知状态'
       }
-    })
-
-    const accuracyClass = computed(() => {
-      const accuracy = positionData.value.accuracy
-      if (accuracy < 0.1) return 'accuracy-good'
-      if (accuracy < 0.5) return 'accuracy-medium'
-      return 'accuracy-poor'
     })
     
     // 存储订阅引用
@@ -139,25 +132,18 @@ export default {
               positionData.value.status = 'ACTIVE'
               positionData.value.lastUpdate = new Date()
 
-              // 计算位置精度，兼容下划线前缀
-              if (type === 'nav_msgs/msg/Odometry') {
-                const pose = message.pose || message._pose
-                const cov = pose?.covariance || pose?._covariance
-                if (cov && Array.isArray(cov)) {
-                  positionData.value.accuracy = Math.sqrt(cov[0] + cov[7] + cov[14])
-                } else {
-                  positionData.value.accuracy = 0.05 // 默认精度5cm
-                }
-              } else if (type === 'geometry_msgs/msg/PoseWithCovarianceStamped') {
-                const pose = message.pose || message._pose
-                const cov = pose?.covariance || pose?._covariance
-                if (cov && Array.isArray(cov)) {
-                  positionData.value.accuracy = Math.sqrt(cov[0] + cov[7] + cov[14])
-                } else {
-                  positionData.value.accuracy = 0.05 // 默认精度5cm
-                }
+              // 计算yaw角度（从四元数转换），兼容下划线前缀
+              if (orientation) {
+                const qx = orientation.x || orientation._x || 0
+                const qy = orientation.y || orientation._y || 0
+                const qz = orientation.z || orientation._z || 0
+                const qw = orientation.w || orientation._w || 1
+
+                // 从四元数计算yaw角度（绕Z轴旋转）
+                const yaw = Math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+                positionData.value.yaw = yaw * 180 / Math.PI // 转换为度
               } else {
-                positionData.value.accuracy = 0.05 // 默认精度5cm
+                positionData.value.yaw = 0.0
               }
 
               // 减少位置更新的日志输出频率
@@ -203,8 +189,7 @@ export default {
     return {
       positionData,
       positionStatusClass,
-      positionStatusText,
-      accuracyClass
+      positionStatusText
     }
   }
 }

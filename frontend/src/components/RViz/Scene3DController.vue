@@ -51,9 +51,26 @@
         <div class="control-item">
           <label>显示设置:</label>
           <div class="display-options">
-            <el-checkbox v-model="showLaserPoints">显示激光点</el-checkbox>
-            <el-checkbox v-model="showLaserLines" v-if="laserType === '2d'">显示连线</el-checkbox>
-            <el-checkbox v-model="showIntensity" v-if="laserType === '3d'">显示强度</el-checkbox>
+            <el-checkbox v-model="showLaserPoints" @change="updateLaserSettings">显示激光点</el-checkbox>
+            <el-checkbox v-model="showLaserLines" v-if="laserType === '2d'" @change="updateLaserSettings">显示连线</el-checkbox>
+            <el-checkbox v-model="showIntensity" v-if="laserType === '3d'" @change="updateLaserSettings">显示强度</el-checkbox>
+          </div>
+        </div>
+
+        <div class="control-item" v-if="laserType === '2d'">
+          <label>激光点设置:</label>
+          <div class="laser-settings">
+            <div class="setting-row">
+              <span>点大小:</span>
+              <el-slider
+                v-model="laserPointSize"
+                :min="0.05"
+                :max="0.5"
+                :step="0.05"
+                @change="updateLaserSettings"
+                style="flex: 1; margin-left: 12px;"
+              />
+            </div>
           </div>
         </div>
         
@@ -62,11 +79,11 @@
           <div class="pointcloud-settings">
             <div class="setting-row">
               <span>点大小:</span>
-              <el-slider 
-                v-model="pointSize" 
-                :min="1" 
-                :max="10" 
-                :step="0.5"
+              <el-slider
+                v-model="pointSize"
+                :min="0.01"
+                :max="0.2"
+                :step="0.01"
                 @change="updatePointCloudSettings"
                 style="flex: 1; margin-left: 12px;"
               />
@@ -119,9 +136,9 @@
         <div class="control-item">
           <label>显示设置:</label>
           <div class="map-display-options">
-            <el-checkbox v-model="showMap">显示地图</el-checkbox>
-            <el-checkbox v-model="showMapGrid">显示网格</el-checkbox>
-            <el-checkbox v-model="showMapOrigin">显示原点</el-checkbox>
+            <el-checkbox v-model="showMap" @change="updateMapSettings">显示地图</el-checkbox>
+            <el-checkbox v-model="showMapGrid" @change="updateMapSettings">显示网格</el-checkbox>
+            <el-checkbox v-model="showMapOrigin" @change="updateMapSettings">显示原点</el-checkbox>
           </div>
         </div>
         
@@ -176,9 +193,9 @@
         <div class="control-item">
           <label>显示设置:</label>
           <div class="position-display-options">
-            <el-checkbox v-model="showRobotPose">显示机器人位姿</el-checkbox>
-            <el-checkbox v-model="showTrajectory">显示轨迹</el-checkbox>
-            <el-checkbox v-model="showCoordinateFrame">显示坐标系</el-checkbox>
+            <el-checkbox v-model="showRobotPose" @change="updatePositionSettings">显示机器人位姿</el-checkbox>
+            <el-checkbox v-model="showTrajectory" @change="updatePositionSettings">显示轨迹</el-checkbox>
+            <el-checkbox v-model="showCoordinateFrame" @change="updatePositionSettings">显示坐标系</el-checkbox>
           </div>
         </div>
         
@@ -287,7 +304,8 @@ export default {
     const showLaserPoints = ref(true)
     const showLaserLines = ref(true)
     const showIntensity = ref(false)
-    const pointSize = ref(2)
+    const laserPointSize = ref(0.15)  // 2D激光点大小
+    const pointSize = ref(0.05)       // 3D点云大小
     const pointOpacity = ref(0.8)
     
     // 地图设置
@@ -502,6 +520,16 @@ export default {
     }
 
     // 设置更新
+    const updateLaserSettings = () => {
+      emit('settings-update', {
+        type: 'laser',
+        showLaserPoints: showLaserPoints.value,
+        showLaserLines: showLaserLines.value,
+        showIntensity: showIntensity.value,
+        pointSize: laserPointSize.value
+      })
+    }
+
     const updatePointCloudSettings = () => {
       emit('settings-update', {
         type: 'pointcloud',
@@ -514,9 +542,20 @@ export default {
     const updateMapSettings = () => {
       emit('settings-update', {
         type: 'map',
+        showMap: showMap.value,
         opacity: mapOpacity.value,
         showGrid: showMapGrid.value,
         showOrigin: showMapOrigin.value
+      })
+    }
+
+    const updatePositionSettings = () => {
+      emit('settings-update', {
+        type: 'position',
+        showRobotPose: showRobotPose.value,
+        showTrajectory: showTrajectory.value,
+        showCoordinateFrame: showCoordinateFrame.value,
+        trajectoryLength: trajectoryLength.value
       })
     }
 
@@ -583,6 +622,7 @@ export default {
       showLaserPoints,
       showLaserLines,
       showIntensity,
+      laserPointSize,
       pointSize,
       pointOpacity,
       
@@ -621,8 +661,10 @@ export default {
       selectMapFile,
       onFileSelected,
       onOdomTopicChange,
+      updateLaserSettings,
       updatePointCloudSettings,
       updateMapSettings,
+      updatePositionSettings,
       updateTrajectorySettings,
       resetCamera,
       toggleGrid,
@@ -681,6 +723,7 @@ export default {
   gap: 8px;
 }
 
+.laser-settings,
 .pointcloud-settings {
   background: rgba(15, 23, 42, 0.3);
   padding: 12px;
