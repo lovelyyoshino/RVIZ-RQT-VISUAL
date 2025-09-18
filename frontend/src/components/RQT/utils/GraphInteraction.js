@@ -101,7 +101,10 @@ export class GraphInteractionController {
     
     // 事件监听器映射
     this.eventListeners = new Map()
-    
+
+    // 防抖定时器
+    this.hoverTimeout = null
+
     // 初始化事件监听
     this.initEventListeners()
   }
@@ -484,14 +487,22 @@ export class GraphInteractionController {
    */
   setHoveredNode(nodeId) {
     const previousNodeId = this.state.hoveredNodeId
-    this.state.hoveredNodeId = nodeId
-    
-    if (previousNodeId !== nodeId) {
-      this.emitEvent('nodeHoverChange', { 
-        previousNodeId, 
-        currentNodeId: nodeId 
-      })
+
+    // 防抖处理，减少频繁的hover状态变化
+    if (this.hoverTimeout) {
+      clearTimeout(this.hoverTimeout)
     }
+
+    this.hoverTimeout = setTimeout(() => {
+      if (this.state.hoveredNodeId !== nodeId) {
+        this.state.hoveredNodeId = nodeId
+
+        this.emitEvent('nodeHoverChange', {
+          previousNodeId,
+          currentNodeId: nodeId
+        })
+      }
+    }, 50) // 50ms防抖延迟
   }
   
   /**
@@ -626,12 +637,18 @@ export class GraphInteractionController {
    * 销毁交互控制器
    */
   destroy() {
+    // 清理防抖定时器
+    if (this.hoverTimeout) {
+      clearTimeout(this.hoverTimeout)
+      this.hoverTimeout = null
+    }
+
     // 移除所有事件监听器
     this.eventListeners.forEach((handler, eventType) => {
       this.container.removeEventListener(eventType, handler)
     })
     this.eventListeners.clear()
-    
+
     console.log('图形交互控制器已销毁')
   }
   

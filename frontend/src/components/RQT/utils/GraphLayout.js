@@ -220,11 +220,15 @@ export class HierarchicalLayout {
     
     // 动态调整间距以适应内容
     this.optimizeSpacing()
-    
+
     const centerX = this.config.width / 2
-    
+
     // 重置边界框
     this.resetBoundingBox()
+
+    // RQT风格优化：更紧凑的布局
+    this.config.levelSpacing = Math.max(80, this.config.levelSpacing * 0.7)
+    this.config.nodeSpacing = Math.max(60, this.config.nodeSpacing * 0.8)
     
     // 按层级布局节点
     this.levels.forEach((nodeIds, level) => {
@@ -352,31 +356,33 @@ export class HierarchicalLayout {
         shape: 'ellipse',
         width: 100,
         height: 50,
-        fill: '#2c5aa0',
-        stroke: '#1a365d',
+        fill: '#f8f9fa',
+        stroke: '#212529',
         strokeWidth: 2,
-        textColor: '#ffffff'
+        textColor: '#212529'
       }
     } else if (node.type === 'topic') {
+      // 根据消息类型返回不同颜色
+      const messageType = node.messageType || 'unknown'
       return {
         shape: 'rectangle',
         width: 120,
         height: 30,
-        fill: '#48bb78',
-        stroke: '#2f855a',
+        fill: this.getTopicColorByType(messageType),
+        stroke: '#212529',
         strokeWidth: 1,
-        textColor: '#ffffff'
+        textColor: '#212529'
       }
     }
-    
+
     return {
       shape: 'circle',
       width: 40,
       height: 40,
-      fill: '#a0aec0',
-      stroke: '#4a5568',
+      fill: '#f8f9fa',
+      stroke: '#212529',
       strokeWidth: 1,
-      textColor: '#ffffff'
+      textColor: '#212529'
     }
   }
   
@@ -780,6 +786,28 @@ export class HierarchicalLayout {
       chunks.push(array.slice(i, i + chunkSize))
     }
     return chunks
+  }
+
+  /**
+   * 根据消息类型获取主题颜色
+   * @param {string} messageType - 消息类型
+   * @returns {string} 颜色值
+   */
+  getTopicColorByType(messageType) {
+    const colorMap = {
+      'sensor_msgs/msg/PointCloud2': '#bde7bd',
+      'sensor_msgs/msg/LaserScan': '#f4d1a6',
+      'nav_msgs/msg/OccupancyGrid': '#d1c4e9',
+      'geometry_msgs/msg/Twist': '#a6d4fa',
+      'nav_msgs/msg/Odometry': '#a6f4de',
+      'sensor_msgs/msg/Image': '#f4c2a6',
+      'tf2_msgs/msg/TFMessage': '#d3d3d3',
+      'std_msgs/msg/String': '#e1f5fe',
+      'std_msgs/msg/Bool': '#f3e5f5',
+      'std_msgs/msg/Int32': '#e8f5e8'
+    }
+
+    return colorMap[messageType] || '#bde7bd'
   }
 }
 
