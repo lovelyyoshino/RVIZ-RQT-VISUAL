@@ -3458,7 +3458,7 @@ export default {
   height: 100%;
   position: relative;
   overflow: hidden;
-  background: #000;
+  background: transparent;
   outline: none;
 }
 

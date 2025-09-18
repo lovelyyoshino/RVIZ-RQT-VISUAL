@@ -71,14 +71,17 @@
 
         <!-- 右侧 ROS 拓扑图区域 -->
         <div class="topology-section" :style="{ width: `${100 - sceneWidth}%` }">
-          <div class="topology-main-panel">
+          <div class="topology-main-panel" :class="{ 'fullscreen': fullscreenPanels.topology }">
             <div class="topology-header">
               <h3>ROS 通信拓扑图</h3>
               <div class="topology-controls">
                 <el-button-group size="small">
                   <el-button @click="toggleTopologyFullscreen">
-                    <el-icon><FullScreen /></el-icon>
-                    全屏
+                    <el-icon>
+                      <FullScreen v-if="!fullscreenPanels.topology" />
+                      <CloseBold v-else />
+                    </el-icon>
+                    {{ fullscreenPanels.topology ? '退出全屏' : '全屏' }}
                   </el-button>
                 </el-button-group>
               </div>
@@ -97,11 +100,14 @@
           <div class="control-panels-area">
             <div class="control-panels-container">
               <!-- GPS/位置信息面板 -->
-              <div class="mini-panel gps-mini-panel">
+              <div class="mini-panel gps-mini-panel" :class="{ 'fullscreen': fullscreenPanels.gps }">
                 <div class="mini-panel-header">
                   <h5>位置信息</h5>
                   <el-button size="small" text @click="expandPanel('gps')">
-                    <el-icon><Expand /></el-icon>
+                    <el-icon>
+                      <FullScreen v-if="!fullscreenPanels.gps" />
+                      <CloseBold v-else />
+                    </el-icon>
                   </el-button>
                 </div>
                 <div class="mini-panel-content">
@@ -110,11 +116,14 @@
               </div>
 
               <!-- 3D控制器面板 -->
-              <div class="mini-panel controller-mini-panel">
+              <div class="mini-panel controller-mini-panel" :class="{ 'fullscreen': fullscreenPanels.controller }">
                 <div class="mini-panel-header">
                   <h5>3D控制</h5>
                   <el-button size="small" text @click="expandPanel('controller')">
-                    <el-icon><Expand /></el-icon>
+                    <el-icon>
+                      <FullScreen v-if="!fullscreenPanels.controller" />
+                      <CloseBold v-else />
+                    </el-icon>
                   </el-button>
                 </div>
                 <div class="mini-panel-content">
@@ -136,11 +145,14 @@
               </div>
 
               <!-- 状态指示面板 -->
-              <div class="mini-panel status-mini-panel">
+              <div class="mini-panel status-mini-panel" :class="{ 'fullscreen': fullscreenPanels.status }">
                 <div class="mini-panel-header">
                   <h5>状态</h5>
                   <el-button size="small" text @click="expandPanel('status')">
-                    <el-icon><Expand /></el-icon>
+                    <el-icon>
+                      <FullScreen v-if="!fullscreenPanels.status" />
+                      <CloseBold v-else />
+                    </el-icon>
                   </el-button>
                 </div>
                 <div class="mini-panel-content">
@@ -149,11 +161,14 @@
               </div>
 
               <!-- 数据图表面板 -->
-              <div class="mini-panel chart-mini-panel">
+              <div class="mini-panel chart-mini-panel" :class="{ 'fullscreen': fullscreenPanels.chart }">
                 <div class="mini-panel-header">
                   <h5>数据图表</h5>
                   <el-button size="small" text @click="expandPanel('chart')">
-                    <el-icon><Expand /></el-icon>
+                    <el-icon>
+                      <FullScreen v-if="!fullscreenPanels.chart" />
+                      <CloseBold v-else />
+                    </el-icon>
                   </el-button>
                 </div>
                 <div class="mini-panel-content">
@@ -176,16 +191,34 @@
             v-for="panel in dragPanels"
             :key="panel.id"
             class="draggable-panel"
-            :class="{ 'dragging': draggingPanel === panel.id }"
+            :class="{ 'dragging': draggingPanel === panel.id, 'fullscreen': panel.fullscreen }"
             :style="getPanelStyle(panel)"
+            :data-panel="panel.id"
             @mousedown="startDrag($event, panel.id)"
             @touchstart="startDrag($event, panel.id)"
           >
+            <!-- 全屏模式下的退出按钮 -->
+            <div v-if="panel.fullscreen" class="fullscreen-exit-btn">
+              <el-button size="large" @click="togglePanelFullscreen(panel.id)">
+                <el-icon><CloseBold /></el-icon>
+                退出全屏
+              </el-button>
+            </div>
+
             <div class="panel-header" @mousedown.stop="startDragFromHeader($event, panel.id)">
               <h4>{{ panel.title }}</h4>
-              <div class="panel-controls">
-                <el-button size="small" text @click="minimizePanel(panel.id)">
-                  <el-icon><Minus /></el-icon>
+              <div class="panel-controls" v-show="!panel.fullscreen">
+                <el-button size="small" text @click="zoomOutPanel(panel.id)" :disabled="panel.zoomLevel <= 0.5 || panel.fullscreen">
+                  <el-icon><ZoomOut /></el-icon>
+                </el-button>
+                <el-button size="small" text @click="zoomInPanel(panel.id)" :disabled="panel.zoomLevel >= 2.0 || panel.fullscreen">
+                  <el-icon><ZoomIn /></el-icon>
+                </el-button>
+                <el-button size="small" text @click="togglePanelFullscreen(panel.id)">
+                  <el-icon><FullScreen v-if="!panel.fullscreen" /><CloseBold v-else /></el-icon>
+                </el-button>
+                <el-button size="small" text @click="minimizePanel(panel.id)" :disabled="panel.fullscreen">
+                  <el-icon><Minus v-if="!panel.minimized" /><Plus v-else /></el-icon>
                 </el-button>
               </div>
             </div>
@@ -230,7 +263,7 @@
 </template>
 
 <script>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import {
   Aim,
   Grid,
@@ -239,7 +272,11 @@ import {
   FullScreen,
   Expand,
   Refresh,
-  Minus
+  Minus,
+  Plus,
+  ZoomIn,
+  ZoomOut,
+  CloseBold
 } from '@element-plus/icons-vue'
 
 // 引入面板组件
@@ -261,6 +298,10 @@ export default {
     Expand,
     Refresh,
     Minus,
+    Plus,
+    ZoomIn,
+    ZoomOut,
+    CloseBold,
     Scene3D,
     GpsPanel,
     NodeTopicGraph,
@@ -281,7 +322,15 @@ export default {
     const isResizing = ref(false)
     const startX = ref(0)
     const startWidth = ref(0)
-    const isTopologyFullscreen = ref(false)
+
+    // 全屏状态管理
+    const fullscreenPanels = ref({
+      topology: false,
+      gps: false,
+      controller: false,
+      status: false,
+      chart: false
+    })
 
     // 拖拽模式状态
     const draggingPanel = ref(null)
@@ -304,7 +353,12 @@ export default {
         y: 20,
         width: 800,
         height: 600,
-        minimized: false
+        minimized: false,
+        fullscreen: false,
+        zoomLevel: 1.0,
+        originalWidth: 800,
+        originalHeight: 600,
+        dragOrder: 0
       },
       {
         id: 'topology',
@@ -313,7 +367,12 @@ export default {
         y: 20,
         width: 500,
         height: 400,
-        minimized: false
+        minimized: false,
+        fullscreen: false,
+        zoomLevel: 1.0,
+        originalWidth: 500,
+        originalHeight: 400,
+        dragOrder: 0
       },
       {
         id: 'gps',
@@ -322,7 +381,12 @@ export default {
         y: 440,
         width: 240,
         height: 180,
-        minimized: false
+        minimized: false,
+        fullscreen: false,
+        zoomLevel: 1.0,
+        originalWidth: 240,
+        originalHeight: 180,
+        dragOrder: 0
       },
       {
         id: 'controller',
@@ -331,7 +395,12 @@ export default {
         y: 440,
         width: 240,
         height: 180,
-        minimized: false
+        minimized: false,
+        fullscreen: false,
+        zoomLevel: 1.0,
+        originalWidth: 240,
+        originalHeight: 180,
+        dragOrder: 0
       },
       {
         id: 'status',
@@ -340,7 +409,12 @@ export default {
         y: 640,
         width: 200,
         height: 160,
-        minimized: false
+        minimized: false,
+        fullscreen: false,
+        zoomLevel: 1.0,
+        originalWidth: 200,
+        originalHeight: 160,
+        dragOrder: 0
       },
       {
         id: 'chart',
@@ -349,27 +423,103 @@ export default {
         y: 640,
         width: 200,
         height: 160,
-        minimized: false
+        minimized: false,
+        fullscreen: false,
+        zoomLevel: 1.0,
+        originalWidth: 200,
+        originalHeight: 160,
+        dragOrder: 0
       }
     ])
 
+    // 用于跟踪拖拽顺序
+    let dragOrderCounter = 0
+
     // 拖拽模式相关方法
     const toggleDragMode = () => {
-      isDragMode.value = !isDragMode.value
       if (isDragMode.value) {
-        ElMessage.success('已进入拖拽模式，您可以拖动每个面板到任意位置')
+        // 退出拖拽模式，按拖拽顺序重新排布
+        exitDragModeWithArrangement()
       } else {
-        ElMessage.info('已退出拖拽模式')
+        // 进入拖拽模式
+        isDragMode.value = true
+        ElMessage.success('已进入拖拽模式，您可以拖动每个面板到任意位置')
       }
     }
 
+    // 退出拖拽模式并按拖拽顺序排布
+    const exitDragModeWithArrangement = () => {
+      // 按拖拽顺序排序面板（dragOrder越大表示越后拖拽，排在越后面）
+      const sortedPanels = [...dragPanels.value].sort((a, b) => b.dragOrder - a.dragOrder)
+
+      // 重新排布面板位置
+      const containerWidth = dragContainer.value?.clientWidth || 1400
+      const containerHeight = dragContainer.value?.clientHeight || 800
+
+      let currentX = 20
+      let currentY = 20
+      let rowHeight = 0
+
+      sortedPanels.forEach(panel => {
+        // 重置缩放和全屏状态
+        panel.zoomLevel = 1.0
+        panel.fullscreen = false
+        panel.minimized = false
+
+        // 使用原始尺寸
+        const width = panel.originalWidth
+        const height = panel.originalHeight
+
+        // 检查是否需要换行
+        if (currentX + width > containerWidth - 20) {
+          currentX = 20
+          currentY += rowHeight + 20
+          rowHeight = 0
+        }
+
+        panel.x = currentX
+        panel.y = currentY
+        panel.width = width
+        panel.height = height
+
+        currentX += width + 20
+        rowHeight = Math.max(rowHeight, height)
+      })
+
+      isDragMode.value = false
+      ElMessage.success('已退出拖拽模式，面板已按拖拽顺序重新排列')
+
+      // 触发3D场景重新调整大小
+      nextTick(() => {
+        if (scene3dRef.value) {
+          scene3dRef.value.handleResize?.()
+        }
+      })
+    }
+
     const getPanelStyle = (panel) => {
+      if (panel.fullscreen) {
+        return {
+          left: '0px',
+          top: '0px',
+          width: '100%',
+          height: '100%',
+          zIndex: 10000,
+          position: 'fixed'
+        }
+      }
+
+      const scaledWidth = panel.width * panel.zoomLevel
+      const scaledHeight = panel.minimized ? 40 : panel.height * panel.zoomLevel
+
       return {
         left: `${panel.x}px`,
         top: `${panel.y}px`,
-        width: `${panel.width}px`,
-        height: panel.minimized ? '40px' : `${panel.height}px`,
-        zIndex: draggingPanel.value === panel.id ? 1000 : 1
+        width: `${scaledWidth}px`,
+        height: `${scaledHeight}px`,
+        zIndex: draggingPanel.value === panel.id ? 1000 : (10 + panel.dragOrder),
+        transform: `scale(1)`, // 保持变换原点
+        transformOrigin: 'top left'
       }
     }
 
@@ -383,6 +533,11 @@ export default {
       draggingPanel.value = panelId
 
       const panel = dragPanels.value.find(p => p.id === panelId)
+      if (panel.fullscreen) return // 全屏模式下不允许拖拽
+
+      // 更新拖拽顺序
+      panel.dragOrder = ++dragOrderCounter
+
       const clientX = event.touches ? event.touches[0].clientX : event.clientX
       const clientY = event.touches ? event.touches[0].clientY : event.clientY
 
@@ -507,6 +662,67 @@ export default {
 
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
+    }
+
+    // 缩放功能
+    const zoomInPanel = (panelId) => {
+      const panel = dragPanels.value.find(p => p.id === panelId)
+      if (panel && panel.zoomLevel < 2.0) {
+        panel.zoomLevel = Math.min(2.0, panel.zoomLevel + 0.25)
+
+        // 3D场景特殊处理，触发resize事件
+        if (panel.id === 'scene' && scene3dRef.value) {
+          nextTick(() => {
+            scene3dRef.value.handleResize?.()
+          })
+        }
+        ElMessage.success(`${panel.title} 已放大至 ${Math.round(panel.zoomLevel * 100)}%`)
+      }
+    }
+
+    const zoomOutPanel = (panelId) => {
+      const panel = dragPanels.value.find(p => p.id === panelId)
+      if (panel && panel.zoomLevel > 0.5) {
+        panel.zoomLevel = Math.max(0.5, panel.zoomLevel - 0.25)
+
+        // 3D场景特殊处理，触发resize事件
+        if (panel.id === 'scene' && scene3dRef.value) {
+          nextTick(() => {
+            scene3dRef.value.handleResize?.()
+          })
+        }
+        ElMessage.success(`${panel.title} 已缩小至 ${Math.round(panel.zoomLevel * 100)}%`)
+      }
+    }
+
+    // 全屏功能
+    const togglePanelFullscreen = (panelId) => {
+      const panel = dragPanels.value.find(p => p.id === panelId)
+      if (panel) {
+        panel.fullscreen = !panel.fullscreen
+
+        if (panel.fullscreen) {
+          // 进入全屏
+          ElMessage.success(`${panel.title} 已进入全屏模式`)
+
+          // 3D场景特殊处理
+          if (panel.id === 'scene' && scene3dRef.value) {
+            nextTick(() => {
+              scene3dRef.value.handleResize?.()
+            })
+          }
+        } else {
+          // 退出全屏
+          ElMessage.info(`${panel.title} 已退出全屏模式`)
+
+          // 3D场景特殊处理
+          if (panel.id === 'scene' && scene3dRef.value) {
+            nextTick(() => {
+              scene3dRef.value.handleResize?.()
+            })
+          }
+        }
+      }
     }
 
     const minimizePanel = (panelId) => {
@@ -728,21 +944,35 @@ export default {
       }
     }
 
-    // 新增的布局控制方法
+    // 全屏控制方法
     const toggleTopologyFullscreen = () => {
-      isTopologyFullscreen.value = !isTopologyFullscreen.value
-      if (isTopologyFullscreen.value) {
-        // 全屏拓扑图
-        document.querySelector('.topology-main-panel').classList.add('fullscreen')
+      toggleTraditionalPanelFullscreen('topology')
+    }
+
+    const toggleTraditionalPanelFullscreen = (panelType) => {
+      fullscreenPanels.value[panelType] = !fullscreenPanels.value[panelType]
+
+      if (fullscreenPanels.value[panelType]) {
+        ElMessage.success(`${getPanelName(panelType)}已全屏`)
       } else {
-        document.querySelector('.topology-main-panel').classList.remove('fullscreen')
+        ElMessage.info(`${getPanelName(panelType)}已退出全屏`)
       }
     }
 
     const expandPanel = (panelType) => {
       console.log(`展开面板: ${panelType}`)
-      // TODO: 实现面板展开逻辑
-      ElMessage.info(`面板展开功能开发中: ${panelType}`)
+      toggleTraditionalPanelFullscreen(panelType)
+    }
+
+    const getPanelName = (panelType) => {
+      const names = {
+        topology: 'ROS通信拓扑图',
+        gps: 'GPS位置信息',
+        controller: '3D控制器',
+        status: '状态面板',
+        chart: '数据图表'
+      }
+      return names[panelType] || panelType
     }
     
     return {
@@ -764,13 +994,19 @@ export default {
       startResize,
       minimizePanel,
       autoArrange,
+      exitDragModeWithArrangement,
+      zoomInPanel,
+      zoomOutPanel,
+      togglePanelFullscreen,
 
       // 传统布局控制
       sceneWidth,
       startSplitterResize,
-      isTopologyFullscreen,
+      fullscreenPanels,
       toggleTopologyFullscreen,
+      toggleTraditionalPanelFullscreen,
       expandPanel,
+      getPanelName,
 
       // 3D场景控制
       resetView,
@@ -1276,6 +1512,16 @@ export default {
   position: relative;
 }
 
+/* 3D场景面板特殊处理，无padding避免黑边 */
+.draggable-panel .panel-body:has(.scene3d-container) {
+  padding: 0;
+}
+
+/* 对于不支持:has()选择器的浏览器，使用ID选择器 */
+.draggable-panel[data-panel="scene"] .panel-body {
+  padding: 0;
+}
+
 /* 调整大小句柄 */
 .resize-handles {
   position: absolute;
@@ -1321,5 +1567,119 @@ export default {
 
 .panel-body::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.6);
+}
+
+/* 全屏模式样式 */
+.draggable-panel.fullscreen {
+  border-radius: 0;
+}
+
+.fullscreen-exit-btn {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 10001;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(10px);
+  border-radius: 8px;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.fullscreen-exit-btn .el-button {
+  background: rgba(220, 38, 38, 0.8);
+  border: none;
+  color: white;
+  font-weight: 500;
+}
+
+.fullscreen-exit-btn .el-button:hover {
+  background: rgba(220, 38, 38, 1);
+  transform: scale(1.05);
+}
+
+/* 全屏模式下隐藏头部控制按钮，只保留标题 */
+.draggable-panel.fullscreen .panel-header {
+  background: rgba(15, 23, 42, 0.9);
+  backdrop-filter: blur(20px);
+}
+
+.draggable-panel.fullscreen .panel-header h4 {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* 传统模式全屏面板样式 */
+.topology-main-panel.fullscreen,
+.mini-panel.fullscreen {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 9999 !important;
+  border-radius: 0 !important;
+  margin: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  transform: none !important;
+}
+
+/* 全屏面板内容适配 */
+.topology-main-panel.fullscreen .topology-content,
+.mini-panel.fullscreen .mini-panel-content {
+  height: calc(100vh - 40px) !important;
+  overflow: auto !important;
+}
+
+/* 全屏面板头部样式 */
+.topology-main-panel.fullscreen .topology-header,
+.mini-panel.fullscreen .mini-panel-header {
+  background: rgba(15, 23, 42, 0.95) !important;
+  backdrop-filter: blur(20px) !important;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.3) !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* 确保全屏面板内容完全可见 */
+.mini-panel.fullscreen .mini-panel-content {
+  padding: 20px !important;
+  height: calc(100vh - 40px) !important;
+}
+
+/* 全屏时的动画效果 */
+.topology-main-panel,
+.mini-panel {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.topology-main-panel.fullscreen,
+.mini-panel.fullscreen {
+  animation: fullscreen-enter 0.3s ease-out;
+}
+
+@keyframes fullscreen-enter {
+  from {
+    transform: scale(0.9);
+    opacity: 0.8;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* 全屏面板关闭按钮增强 */
+.topology-main-panel.fullscreen .topology-controls .el-button,
+.mini-panel.fullscreen .mini-panel-header .el-button {
+  background: rgba(255, 59, 48, 0.1) !important;
+  border-color: rgba(255, 59, 48, 0.3) !important;
+  color: #ff3b30 !important;
+}
+
+.topology-main-panel.fullscreen .topology-controls .el-button:hover,
+.mini-panel.fullscreen .mini-panel-header .el-button:hover {
+  background: rgba(255, 59, 48, 0.2) !important;
+  border-color: rgba(255, 59, 48, 0.5) !important;
 }
 </style>
