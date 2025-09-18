@@ -795,19 +795,78 @@ export class HierarchicalLayout {
    */
   getTopicColorByType(messageType) {
     const colorMap = {
+      // 传感器消息 - 绿色系
       'sensor_msgs/msg/PointCloud2': '#bde7bd',
-      'sensor_msgs/msg/LaserScan': '#f4d1a6',
-      'nav_msgs/msg/OccupancyGrid': '#d1c4e9',
-      'geometry_msgs/msg/Twist': '#a6d4fa',
-      'nav_msgs/msg/Odometry': '#a6f4de',
+      'sensor_msgs/msg/LaserScan': '#a6d4fa',
       'sensor_msgs/msg/Image': '#f4c2a6',
+      'sensor_msgs/msg/CompressedImage': '#f4c2a6',
+      'sensor_msgs/msg/CameraInfo': '#f4c2a6',
+      'sensor_msgs/msg/Imu': '#c8e6c9',
+      'sensor_msgs/msg/NavSatFix': '#a5d6a7',
+      
+      // 导航消息 - 蓝色系
+      'nav_msgs/msg/OccupancyGrid': '#d1c4e9',
+      'nav_msgs/msg/Odometry': '#a6f4de',
+      'nav_msgs/msg/Path': '#81d4fa',
+      'nav_msgs/msg/MapMetaData': '#90caf9',
+      
+      // 几何消息 - 紫色系
+      'geometry_msgs/msg/Twist': '#ce93d8',
+      'geometry_msgs/msg/Pose': '#ba68c8',
+      'geometry_msgs/msg/PoseStamped': '#ab47bc',
+      'geometry_msgs/msg/Transform': '#9c27b0',
+      'geometry_msgs/msg/Vector3': '#8e24aa',
+      'geometry_msgs/msg/Point': '#7b1fa2',
+      
+      // TF消息 - 灰色系
       'tf2_msgs/msg/TFMessage': '#d3d3d3',
-      'std_msgs/msg/String': '#e1f5fe',
-      'std_msgs/msg/Bool': '#f3e5f5',
-      'std_msgs/msg/Int32': '#e8f5e8'
+      'tf2_msgs/msg/TF2Error': '#bdbdbd',
+      
+      // 标准消息 - 橙色系
+      'std_msgs/msg/String': '#ffcc80',
+      'std_msgs/msg/Bool': '#ffb74d',
+      'std_msgs/msg/Int32': '#ffa726',
+      'std_msgs/msg/Float32': '#ff9800',
+      'std_msgs/msg/Header': '#ff8f00',
+      
+      // 诊断消息 - 红色系
+      'diagnostic_msgs/msg/DiagnosticArray': '#ffcdd2',
+      'diagnostic_msgs/msg/DiagnosticStatus': '#ef9a9a',
+      
+      // 动作消息 - 黄色系
+      'actionlib_msgs/msg/GoalStatus': '#fff9c4',
+      'actionlib_msgs/msg/GoalID': '#f9fbe7',
+      
+      // 可视化消息 - 青色系
+      'visualization_msgs/msg/Marker': '#b2dfdb',
+      'visualization_msgs/msg/MarkerArray': '#80cbc4',
+      
+      // 其他常见消息类型
+      'rosgraph_msgs/msg/Log': '#e0e0e0',
+      'rcl_interfaces/msg/ParameterEvent': '#f5f5f5',
+      'builtin_interfaces/msg/Time': '#eeeeee'
     }
 
-    return colorMap[messageType] || '#bde7bd'
+    // 如果没有精确匹配，尝试部分匹配
+    if (!colorMap[messageType]) {
+      if (messageType.includes('sensor_msgs')) {
+        return '#bde7bd'  // 传感器消息默认绿色
+      } else if (messageType.includes('nav_msgs')) {
+        return '#a6f4de'  // 导航消息默认青色
+      } else if (messageType.includes('geometry_msgs')) {
+        return '#ce93d8'  // 几何消息默认紫色
+      } else if (messageType.includes('std_msgs')) {
+        return '#ffcc80'  // 标准消息默认橙色
+      } else if (messageType.includes('diagnostic_msgs')) {
+        return '#ffcdd2'  // 诊断消息默认红色
+      } else if (messageType.includes('visualization_msgs')) {
+        return '#b2dfdb'  // 可视化消息默认青色
+      } else {
+        return '#bde7bd'  // 默认绿色
+      }
+    }
+
+    return colorMap[messageType]
   }
 }
 

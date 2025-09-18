@@ -455,16 +455,16 @@ export default {
     const detailPanelCollapsed = ref(false)
     const selectedNamespace = ref('')
     const showType = ref('all')
-    const hideUnconnected = ref(true) // 默认隐藏未连接节点，模拟rqt
-    const hideSystemNodes = ref(true) // 默认隐藏系统节点
+    const hideUnconnected = ref(false) // 默认显示未连接节点，让用户看到完整图形
+    const hideSystemNodes = ref(false) // 默认显示系统节点，让用户看到完整图形
     const groupByNamespace = ref(false)
     const selectedItem = ref(null)
     const availableNamespaces = ref([])
 
     // ===== 新增的RQT过滤选项 =====
-    const hideDeadSinks = ref(true)      // 隐藏Dead Sinks (只有订阅没有发布的节点)
-    const hideLeafTopics = ref(true)     // 隐藏Leaf Topics (没有订阅者的主题)
-    const hideDebugTopics = ref(true)    // 隐藏Debug Topics (调试相关主题)
+    const hideDeadSinks = ref(false)     // 默认显示Dead Sinks，让用户看到完整图形
+    const hideLeafTopics = ref(false)    // 默认显示Leaf Topics，让用户看到完整图形
+    const hideDebugTopics = ref(true)    // 默认隐藏Debug Topics (调试相关主题)
     
     // ===== 动画相关状态 =====
     const animationFrameId = ref(null)
@@ -1678,7 +1678,7 @@ export default {
             enableZoom: true,
             enableDrag: true,
             minScale: 0.1,
-            maxScale: 5.0
+            maxScale: 1.0  // 最大缩放限制为100%
           }
         )
         
