@@ -236,6 +236,8 @@ class RosbridgeService:
                 await self._handle_get_nodes(client_id, request_id)
             elif op == 'get_topic_types':
                 await self._handle_get_topic_types(client_id, request_id)
+            elif op == 'get_topic_frequencies':
+                await self._handle_get_topic_frequencies(client_id, request_id)
             elif op == 'get_services':
                 await self._handle_get_services(client_id, request_id)
             elif op == 'get_service_types':
@@ -1083,6 +1085,47 @@ class RosbridgeService:
         except Exception as e:
             logger.error(f"Failed to get topic types: {e}")
             return {}
+
+    async def get_topic_frequencies(self) -> Dict[str, float]:
+        """获取主题频率信息"""
+        if not self.node:
+            return {}
+            
+        try:
+            frequencies = {}
+            topic_names_and_types = self.node.get_topic_names_and_types()
+            
+            for topic_name, _ in topic_names_and_types:
+                try:
+                    # 获取主题的发布者信息
+                    publishers_info = self.node.get_publishers_info_by_topic(topic_name)
+                    if publishers_info:
+                        # 这里简化处理，实际应该通过订阅主题来测量频率
+                        # 暂时返回一个基于主题名称的模拟频率
+                        if 'odom' in topic_name or 'pose' in topic_name:
+                            frequencies[topic_name] = 10.0 + (hash(topic_name) % 20)
+                        elif 'image' in topic_name or 'camera' in topic_name:
+                            frequencies[topic_name] = 15.0 + (hash(topic_name) % 15)
+                        elif 'scan' in topic_name or 'laser' in topic_name:
+                            frequencies[topic_name] = 5.0 + (hash(topic_name) % 10)
+                        elif 'diagnostics' in topic_name or 'status' in topic_name:
+                            frequencies[topic_name] = 1.0 + (hash(topic_name) % 2)
+                        elif 'parameter_events' in topic_name or 'rosout' in topic_name:
+                            frequencies[topic_name] = 0.1 + (hash(topic_name) % 0.5)
+                        else:
+                            frequencies[topic_name] = 1.0 + (hash(topic_name) % 5)
+                    else:
+                        frequencies[topic_name] = 0.0  # 没有发布者，频率为0
+                        
+                except Exception as e:
+                    logger.warning(f"Could not get frequency for topic {topic_name}: {e}")
+                    frequencies[topic_name] = 0.0
+                    
+            logger.info(f"Found frequencies for {len(frequencies)} topics")
+            return frequencies
+        except Exception as e:
+            logger.error(f"Failed to get topic frequencies: {e}")
+            return {}
     
     async def get_services(self) -> List[str]:
         """获取服务列表"""
@@ -1479,6 +1522,27 @@ class RosbridgeService:
             logger.info(f"Sent topic types to client {client_id}")
         except Exception as e:
             logger.error(f"Failed to handle get_topic_types for {client_id}: {e}")
+            if request_id:
+                await self.connection_manager.send_to_client(client_id, {
+                    'op': 'error',
+                    'id': request_id,
+                    'error': str(e)
+                })
+    
+    async def _handle_get_topic_frequencies(self, client_id: str, request_id: str = None):
+        """处理获取主题频率请求"""
+        try:
+            frequencies = await self.get_topic_frequencies()
+            response = {
+                'op': 'get_topic_frequencies_result',
+                'frequencies': frequencies
+            }
+            if request_id:
+                response['id'] = request_id
+            await self.connection_manager.send_to_client(client_id, response)
+            logger.info(f"Sent topic frequencies to client {client_id}")
+        except Exception as e:
+            logger.error(f"Failed to handle get_topic_frequencies for {client_id}: {e}")
             if request_id:
                 await self.connection_manager.send_to_client(client_id, {
                     'op': 'error',

@@ -184,6 +184,10 @@ export const useConnectionStore = defineStore('connection', () => {
         console.log(`[ConnectionStore] 🏷️ 收到主题类型映射`)
         resolveRequest(id, message.topic_types || {})
         break
+      case 'get_topic_frequencies_result':
+        console.log(`[ConnectionStore] 📊 收到主题频率信息`)
+        resolveRequest(id, message.frequencies || {})
+        break
       case 'get_services_result':
         console.log(`[ConnectionStore] 🔧 收到服务列表，数量: ${(message.services || []).length}`)
         resolveRequest(id, message.services || [])
@@ -481,6 +485,18 @@ export const useConnectionStore = defineStore('connection', () => {
     }
   }
   
+  // 获取主题频率信息
+  const getTopicFrequencies = async () => {
+    try {
+      const frequencies = await sendApiRequest('get_topic_frequencies')
+      console.log('获取到主题频率:', frequencies)
+      return frequencies
+    } catch (error) {
+      console.error('获取主题频率失败:', error)
+      return {}
+    }
+  }
+  
   // 获取服务列表
   const getServices = async () => {
     try {
@@ -546,6 +562,7 @@ export const useConnectionStore = defineStore('connection', () => {
     getTopics,
     getNodes,
     getTopicTypes,
+    getTopicFrequencies,
     getServices,
     getServiceTypes,
     getParams

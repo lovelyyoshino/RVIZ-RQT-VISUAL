@@ -295,8 +295,8 @@ export default {
     const getNodeColor = (data) => {
       switch (data.type) {
         case 'category': return '#409eff'
-        case 'node': return '#67c23a'
-        case 'topic': return '#e6a23c'
+        case 'node': return '#409eff'
+        case 'topic': return '#67c23a'
         case 'service': return '#f56c6c'
         case 'parameter': return '#909399'
         default: return '#909399'

@@ -106,6 +106,13 @@ export function useRosbridge() {
   }
   
   /**
+   * 获取主题频率信息
+   */
+  const getTopicFrequencies = () => {
+    return connectionStore.getTopicFrequencies()
+  }
+  
+  /**
    * 获取服务列表
    */
   const getServices = () => {
@@ -220,6 +227,7 @@ export function useRosbridge() {
     getTopics,
     getNodes,
     getTopicTypes,
+    getTopicFrequencies,
     getServices,
     getServiceTypes,
     getParams,

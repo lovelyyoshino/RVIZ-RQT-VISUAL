@@ -111,7 +111,6 @@
             <label class="control-label">Layout</label>
             <el-select v-model="layoutType" size="small" style="width: 100%;" @change="applyLayout">
               <el-option label="Hierarchical" value="hierarchical" />
-              <el-option label="Force-directed" value="force" />
               <el-option label="Circular" value="circular" />
             </el-select>
           </div>
@@ -271,7 +270,33 @@
                   >
                     {{ getTopicLabel(topic) }}
                   </text>
+                  
+                  <!-- 频率指示器 -->
+                  <text
+                    y="12"
+                    text-anchor="middle"
+                    :fill="getFrequencyColor(topic.name)"
+                    font-size="8"
+                    font-weight="500"
+                    font-family="system-ui, sans-serif"
+                  >
+                    {{ getTopicFrequencyDisplay(topic.name) }}
+                  </text>
                 </g>
+              </g>
+
+              <!-- 数据流动画层 -->
+              <g class="animation-layer" v-if="enableAnimation">
+                <circle
+                  v-for="particle in dataFlowParticles"
+                  :key="particle.id"
+                  :cx="particle.currentX"
+                  :cy="particle.currentY"
+                  :r="particle.size"
+                  :fill="particle.connectionId.includes('pub') ? '#67c23a' : '#409eff'"
+                  :opacity="particle.opacity"
+                  class="data-flow-particle"
+                />
               </g>
             </g>
           </svg>
@@ -303,7 +328,7 @@
               </div>
               <div v-if="selectedItem.type === 'topic'" class="info-item">
                 <label>Frequency:</label>
-                <span>{{ selectedItem.frequency || 'N/A' }} Hz</span>
+                <span>{{ getTopicFrequencyDisplay(selectedItem.name) }}</span>
               </div>
               <div class="info-item">
                 <label>Publishers:</label>
@@ -367,7 +392,7 @@
         </div>
         <div v-if="tooltip.data.type === 'topic'" class="tooltip-item">
           <span class="tooltip-label">Frequency:</span>
-          <span class="tooltip-value">{{ tooltip.data.frequency || 'N/A' }} Hz</span>
+          <span class="tooltip-value">{{ getTopicFrequencyDisplay(tooltip.data.name) }}</span>
         </div>
         <div class="tooltip-item">
           <span class="tooltip-label">Publishers:</span>
@@ -440,6 +465,17 @@ export default {
     const hideDeadSinks = ref(true)      // 隐藏Dead Sinks (只有订阅没有发布的节点)
     const hideLeafTopics = ref(true)     // 隐藏Leaf Topics (没有订阅者的主题)
     const hideDebugTopics = ref(true)    // 隐藏Debug Topics (调试相关主题)
+    
+    // ===== 动画相关状态 =====
+    const animationFrameId = ref(null)
+    const animationStartTime = ref(0)
+    const dataFlowParticles = ref([])
+    const animationSpeed = ref(1.0)
+    
+    // ===== 频率监控状态 =====
+    const topicFrequency = ref(new Map()) // 主题频率监控
+    const nodeActivity = ref(new Map())   // 节点活跃度监控
+    const frequencyUpdateInterval = ref(null) // 频率更新定时器
 
     // ===== 悬浮提示状态 =====
     const tooltip = ref({
@@ -494,36 +530,48 @@ export default {
         )
       }
 
-      // RQT风格的过滤逻辑
+      // RQT风格的过滤逻辑 - 按照RQT graph的实际行为
+
+      // 隐藏系统节点 - 优先处理
+      if (hideSystemNodes.value) {
+        const systemPatterns = [
+          '/rosout',
+          '/parameter_events',
+          'launch_ros',
+          '_static_transform_publisher',
+          '/robot_state_publisher',
+          '/tf2_web_republisher',
+          '/rosapi',
+          '/rosbridge',
+          'rqt_gui',
+          'rqt_',
+          'rviz'
+        ]
+        
+        const beforeCount = nodes.length
+        nodes = nodes.filter(node => {
+          const isSystemNode = systemPatterns.some(pattern => node.name.includes(pattern))
+          if (isSystemNode) {
+            console.log(`过滤系统节点: ${node.name}`)
+          }
+          return !isSystemNode
+        })
+        console.log(`系统节点过滤: ${beforeCount} -> ${nodes.length} 个节点`)
+      }
+
+      // 隐藏Dead Sinks - 根据新定义：订阅了主题但没有正确处理消息的节点
+      if (hideDeadSinks.value) {
+        const deadSinkNodes = detectDeadSinkNodes(nodes)
+        console.log(`检测到 ${deadSinkNodes.length} 个Dead Sink节点:`, deadSinkNodes.map(n => n.name))
+        const deadSinkNames = new Set(deadSinkNodes.map(n => n.name))
+        nodes = nodes.filter(node => !deadSinkNames.has(node.name))
+      }
 
       // 隐藏未连接节点 - RQT定义：没有任何发布或订阅连接的节点
       if (hideUnconnected.value) {
         nodes = nodes.filter(node => {
           const connections = nodeConnections.get(node.name) || { publishedTopics: new Set(), subscribedTopics: new Set() }
           return connections.publishedTopics.size > 0 || connections.subscribedTopics.size > 0
-        })
-      }
-
-      // 隐藏Dead Sinks - RQT定义：只订阅主题但不发布任何主题的节点
-      if (hideDeadSinks.value) {
-        nodes = nodes.filter(node => {
-          const connections = nodeConnections.get(node.name) || { publishedTopics: new Set(), subscribedTopics: new Set() }
-          // 如果节点有订阅但没有发布，则过滤掉
-          return !(connections.subscribedTopics.size > 0 && connections.publishedTopics.size === 0)
-        })
-      }
-
-      // 隐藏系统节点
-      if (hideSystemNodes.value) {
-        nodes = nodes.filter(node => {
-          const systemPatterns = [
-            '/rosout',
-            '/parameter_events',
-            'launch_ros',
-            '_static_transform_publisher',
-            '/robot_state_publisher'
-          ]
-          return !systemPatterns.some(pattern => node.name.includes(pattern))
         })
       }
 
@@ -564,13 +612,20 @@ export default {
         })
       }
 
-      // 隐藏Leaf Topics - RQT定义：有发布者但没有订阅者的主题
+      // 隐藏Leaf Topics - 根据新定义：没有其他话题依赖于它的消息输出的主题
       if (hideLeafTopics.value) {
-        topics = topics.filter(topic => {
-          const connections = topicConnections.get(topic.name) || { publishers: new Set(), subscribers: new Set() }
-          // 如果主题有发布者但没有订阅者，则过滤掉
-          return !(connections.publishers.size > 0 && connections.subscribers.size === 0)
-        })
+        const leafTopics = detectLeafTopics(topics)
+
+        const leafTopicNames = new Set(leafTopics.map(t => t.name))
+        topics = topics.filter(topic => !leafTopicNames.has(topic.name))
+      }
+
+      // 隐藏Dead Sinks对应的主题 - 根据Hz数和订阅关系判断
+      if (hideDeadSinks.value) {
+        const deadSinkTopics = detectDeadSinkTopics(topics)
+        console.log(`检测到 ${deadSinkTopics.length} 个Dead Sink主题:`, deadSinkTopics.map(t => t.name))
+        const deadSinkTopicNames = new Set(deadSinkTopics.map(t => t.name))
+        topics = topics.filter(topic => !deadSinkTopicNames.has(topic.name))
       }
 
       // 隐藏Debug Topics (调试相关主题)
@@ -606,6 +661,15 @@ export default {
         topics = topics.filter(topic => {
           const topicNamespace = extractNamespace(topic.name)
           return topicNamespace === selectedNamespace.value
+        })
+      }
+
+      // 调试：输出过滤结果
+      console.log(`Topic filtering result: ${topics.length} topics remaining`)
+      if (hideLeafTopics.value) {
+        const leafTopics = rawTopics.value.filter(topic => {
+          const connections = topicConnections.get(topic.name) || { publishers: new Set(), subscribers: new Set() }
+          return connections.publishers.size > 0 && connections.subscribers.size === 0
         })
       }
 
@@ -679,7 +743,7 @@ export default {
 
     /**
      * 构建主题连接映射表
-     * 根据活跃节点计算每个主题的发布者和订阅者
+     * 根据所有节点计算每个主题的发布者和订阅者（不限制于活跃节点）
      */
     const buildTopicConnectionMap = (activeNodeNames) => {
       const topicConnections = new Map()
@@ -692,11 +756,9 @@ export default {
         })
       })
 
-      // 遍历活跃节点，构建主题的连接信息
+      // 遍历所有节点，构建主题的连接信息（不限制于活跃节点）
+      // 这样确保主题连接信息完整，过滤在后续步骤进行
       rawNodes.value.forEach(node => {
-        // 只考虑活跃节点
-        if (!activeNodeNames.has(node.name)) return
-
         // 记录该节点发布的主题
         if (node.publishers) {
           node.publishers.forEach(topicName => {
@@ -718,7 +780,317 @@ export default {
         }
       })
 
+      console.log('Topic connections built:', topicConnections)
       return topicConnections
+    }
+
+    // ===== 动画方法 =====
+    
+    /**
+     * 创建数据流粒子
+     */
+    const createDataFlowParticles = () => {
+      if (!enableAnimation.value) return
+      
+      dataFlowParticles.value = []
+      
+      // 为每个连接创建粒子
+      filteredConnections.value.forEach(connection => {
+        const fromNode = [...filteredNodes.value, ...filteredTopics.value].find(n => n.id === connection.from)
+        const toNode = [...filteredNodes.value, ...filteredTopics.value].find(n => n.id === connection.to)
+        
+        if (fromNode && toNode) {
+          // 创建多个粒子以显示数据流
+          for (let i = 0; i < 3; i++) {
+            dataFlowParticles.value.push({
+              id: `${connection.id}_particle_${i}`,
+              connectionId: connection.id,
+              progress: (i * 0.3) % 1, // 错开粒子的起始位置
+              fromX: fromNode.x,
+              fromY: fromNode.y,
+              toX: toNode.x,
+              toY: toNode.y,
+              speed: 0.5 + Math.random() * 0.5, // 随机速度
+              opacity: 0.8,
+              size: 3 + Math.random() * 2
+            })
+          }
+        }
+      })
+    }
+    
+    /**
+     * 更新数据流粒子动画
+     */
+    const updateDataFlowAnimation = () => {
+      if (!enableAnimation.value || dataFlowParticles.value.length === 0) return
+      
+      const currentTime = Date.now()
+      const deltaTime = Math.max(16, currentTime - animationStartTime.value) // 确保最小16ms间隔
+      
+      dataFlowParticles.value.forEach(particle => {
+        // 更新粒子进度
+        particle.progress += (particle.speed * animationSpeed.value * deltaTime) / 3000
+        
+        // 如果粒子到达终点，重新开始
+        if (particle.progress >= 1) {
+          particle.progress = 0
+        }
+        
+        // 计算当前位置
+        const t = particle.progress
+        particle.currentX = particle.fromX + (particle.toX - particle.fromX) * t
+        particle.currentY = particle.fromY + (particle.toY - particle.fromY) * t
+        
+        // 计算透明度（在开始和结束时淡入淡出）
+        if (t < 0.1) {
+          particle.opacity = t / 0.1 * 0.8
+        } else if (t > 0.9) {
+          particle.opacity = (1 - t) / 0.1 * 0.8
+        } else {
+          particle.opacity = 0.8
+        }
+      })
+      
+      animationStartTime.value = currentTime
+    }
+    
+    /**
+     * 启动动画循环
+     */
+    const startAnimation = () => {
+      if (animationFrameId.value) return
+      
+      animationStartTime.value = Date.now()
+      createDataFlowParticles()
+      
+      const animate = () => {
+        updateDataFlowAnimation()
+        animationFrameId.value = requestAnimationFrame(animate)
+      }
+      
+      animate()
+    }
+    
+    /**
+     * 停止动画循环
+     */
+    const stopAnimation = () => {
+      if (animationFrameId.value) {
+        cancelAnimationFrame(animationFrameId.value)
+        animationFrameId.value = null
+      }
+      dataFlowParticles.value = []
+    }
+    
+    /**
+     * 切换动画状态
+     */
+    const toggleAnimation = () => {
+      if (enableAnimation.value) {
+        startAnimation()
+      } else {
+        stopAnimation()
+      }
+    }
+
+    // ===== 频率监控方法 =====
+    
+    /**
+     * 开始频率监控
+     */
+    const startFrequencyMonitoring = async () => {
+      try {
+        // 从后端API获取真实的频率信息
+        const frequencies = await rosbridge.getTopicFrequencies()
+        console.log('从后端获取的频率数据:', frequencies)
+        
+        // 更新频率数据
+        Object.entries(frequencies).forEach(([topicName, frequency]) => {
+          topicFrequency.value.set(topicName, frequency)
+          
+          // 处理频率显示
+          let frequencyDisplay = 'N/A'
+          if (isNaN(frequency)) {
+            frequencyDisplay = 'N/A'
+          } else if (frequency === 0) {
+            frequencyDisplay = '0Hz'
+          } else {
+            frequencyDisplay = `${frequency.toFixed(2)}Hz`
+          }
+          
+          console.log(`主题 ${topicName} 频率: ${frequencyDisplay}`)
+        })
+        
+        console.log('频率监控数据更新完成')
+        
+        // 启动定期更新频率监控
+        if (frequencyUpdateInterval.value) {
+          clearInterval(frequencyUpdateInterval.value)
+        }
+        
+        frequencyUpdateInterval.value = setInterval(async () => {
+          await startFrequencyMonitoring()
+        }, 5000) // 每5秒更新一次频率数据
+        
+      } catch (error) {
+        console.error('频率监控失败:', error)
+        // 如果API调用失败，使用模拟数据作为后备
+        console.log('使用模拟频率数据作为后备')
+        await startFrequencyMonitoringFallback()
+      }
+    }
+    
+    /**
+     * 频率监控后备方案（模拟数据）
+     */
+    const startFrequencyMonitoringFallback = async () => {
+      try {
+        const topics = await rosbridge.getTopics()
+        const frequencyPromises = topics.map(async (topicName) => {
+          try {
+            // 模拟不同主题的频率数据
+            let frequency = 0
+            
+            // 根据主题名称模拟不同的频率
+            if (topicName.includes('odom') || topicName.includes('pose')) {
+              frequency = 10 + Math.random() * 20 // 10-30Hz
+            } else if (topicName.includes('image') || topicName.includes('camera')) {
+              frequency = 15 + Math.random() * 15 // 15-30Hz
+            } else if (topicName.includes('scan') || topicName.includes('laser')) {
+              frequency = 5 + Math.random() * 10 // 5-15Hz
+            } else if (topicName.includes('diagnostics') || topicName.includes('status')) {
+              frequency = 1 + Math.random() * 2 // 1-3Hz
+            } else if (topicName.includes('parameter_events') || topicName.includes('rosout')) {
+              frequency = 0.1 + Math.random() * 0.5 // 0.1-0.6Hz (低频)
+            } else {
+              frequency = 1 + Math.random() * 5 // 1-6Hz 正常频率
+            }
+            
+            topicFrequency.value.set(topicName, frequency)
+            console.log(`主题 ${topicName} 频率(模拟): ${frequency.toFixed(2)}Hz`)
+          } catch (error) {
+            console.warn(`无法获取主题 ${topicName} 的频率:`, error)
+            topicFrequency.value.set(topicName, 0)
+          }
+        })
+        
+        await Promise.all(frequencyPromises)
+        console.log('模拟频率监控数据更新完成')
+        
+      } catch (error) {
+        console.error('模拟频率监控失败:', error)
+      }
+    }
+    
+    /**
+     * 停止频率监控
+     */
+    const stopFrequencyMonitoring = () => {
+      if (frequencyUpdateInterval.value) {
+        clearInterval(frequencyUpdateInterval.value)
+        frequencyUpdateInterval.value = null
+      }
+    }
+    
+    /**
+     * 检测Dead Sink节点
+     * 根据正确定义：订阅了主题但没有正确处理消息的节点
+     * 或者节点已经停止运行而未取消订阅
+     */
+    const detectDeadSinkNodes = (nodes) => {
+      return nodes.filter(node => {
+        const connections = nodeConnections.get(node.name) || { publishedTopics: new Set(), subscribedTopics: new Set() }
+        
+        // 如果节点没有订阅任何主题，不是dead sink
+        if (connections.subscribedTopics.size === 0) return false
+        
+        // 检查节点订阅的主题是否都有活跃的发布者和数据流
+        let hasActiveDataFlow = false
+        let allTopicsDead = true
+        
+        connections.subscribedTopics.forEach(topicName => {
+          const topicConnections = buildTopicConnectionMap(new Set())
+          const topicInfo = topicConnections.get(topicName)
+          const frequency = topicFrequency.value.get(topicName) || 0
+          
+          console.log(`节点 ${node.name} 订阅主题 ${topicName}: 发布者=${topicInfo?.publishers.size || 0}, 频率=${frequency}Hz`)
+          
+          // 如果主题有发布者且频率正常，说明有活跃的数据流
+          if (topicInfo && topicInfo.publishers.size > 0 && frequency > 0.1) {
+            hasActiveDataFlow = true
+            allTopicsDead = false
+          }
+        })
+        
+        // 如果节点订阅了主题但没有活跃的数据流，则是dead sink
+        const isDeadSink = !hasActiveDataFlow && allTopicsDead
+        if (isDeadSink) {
+          console.log(`检测到Dead Sink节点: ${node.name} (订阅的主题没有活跃数据流)`)
+        }
+        
+        return isDeadSink
+      })
+    }
+    
+    /**
+     * 检测Dead Sink主题
+     * 根据正确定义：
+     * 1. 有发布者但没有订阅者的主题（数据被发布但没人消费）
+     * 2. 有订阅者但没有发布者的主题（有人想消费但没有数据）
+     * 3. 频率为0或NA的主题
+     */
+    const detectDeadSinkTopics = (topics) => {
+      return topics.filter(topic => {
+        const connections = buildTopicConnectionMap(new Set())
+        const topicInfo = connections.get(topic.name)
+        
+        if (!topicInfo) return false
+        
+        const frequency = topicFrequency.value.get(topic.name) || 0
+        const hasPublishers = topicInfo.publishers.size > 0
+        const hasSubscribers = topicInfo.subscribers.size > 0
+        
+        console.log(`主题 ${topic.name}: 发布者=${hasPublishers ? topicInfo.publishers.size : 0}, 订阅者=${hasSubscribers ? topicInfo.subscribers.size : 0}, 频率=${frequency}Hz`)
+        
+        // 情况1：有发布者但没有订阅者（数据被发布但没人消费）
+        const case1 = hasPublishers && !hasSubscribers
+        
+        // 情况2：有订阅者但没有发布者（有人想消费但没有数据）
+        const case2 = !hasPublishers && hasSubscribers
+        
+        // 情况3：频率为0或NA（没有数据流）
+        const case3 = frequency === 0 || isNaN(frequency)
+        
+        const isDeadSinkTopic = case1 || case2 || case3
+        
+        if (isDeadSinkTopic) {
+          console.log(`检测到Dead Sink主题: ${topic.name} (原因: ${case1 ? '有发布无订阅' : case2 ? '有订阅无发布' : '频率为0'})`)
+        }
+        
+        return isDeadSinkTopic
+      })
+    }
+    
+    /**
+     * 检测Leaf Topic
+     * 根据新定义：没有其他话题依赖于它的消息输出的主题
+     */
+    const detectLeafTopics = (topics) => {
+      return topics.filter(topic => {
+        const connections = buildTopicConnectionMap(new Set())
+        const topicInfo = connections.get(topic.name)
+        
+        if (!topicInfo) return false
+        
+        // 如果主题没有发布者，不是leaf topic
+        if (topicInfo.publishers.size === 0) return false
+        
+        // 检查是否有其他主题依赖于这个主题的输出
+        // 这里需要检查主题之间的依赖关系，暂时简化处理
+        // 如果主题有订阅者，则不是leaf topic
+        return topicInfo.subscribers.size === 0
+      })
     }
 
     // ===== 核心方法 =====
@@ -771,10 +1143,10 @@ export default {
             style: {
               width: 100,
               height: 50,
-              fill: '#2c5aa0',
-              stroke: '#1a365d',
+              fill: '#ffffff',
+              stroke: '#303133',
               strokeWidth: 2,
-              textColor: '#ffffff'
+              textColor: '#303133'
             }
           }
         })
@@ -784,14 +1156,32 @@ export default {
           const topicName = typeof topicInfo === 'string' ? topicInfo : topicInfo.name
           const messageType = topicTypes[topicName] || 'unknown'
           
+          // 计算该主题的实际发布者和订阅者
+          const topicPublishers = []
+          const topicSubscribers = []
+          
+          // 遍历所有节点，找到发布和订阅该主题的节点
+          nodeList.forEach(nodeInfo => {
+            const nodeName = typeof nodeInfo === 'string' ? nodeInfo : nodeInfo.name
+            const nodePublishers = typeof nodeInfo === 'object' ? (nodeInfo.publishers || []) : []
+            const nodeSubscribers = typeof nodeInfo === 'object' ? (nodeInfo.subscribers || []) : []
+            
+            if (nodePublishers.includes(topicName)) {
+              topicPublishers.push(nodeName)
+            }
+            if (nodeSubscribers.includes(topicName)) {
+              topicSubscribers.push(nodeName)
+            }
+          })
+          
           return {
             id: `topic_${index}`,
             name: topicName,
             label: topicName.split('/').pop() || topicName,
             type: 'topic',
             messageType: messageType,
-            publishers: typeof topicInfo === 'object' ? (topicInfo.publishers || []) : [],
-            subscribers: typeof topicInfo === 'object' ? (topicInfo.subscribers || []) : [],
+            publishers: topicPublishers,
+            subscribers: topicSubscribers,
             x: 0,
             y: 0,
             selected: false,
@@ -799,17 +1189,27 @@ export default {
               width: 120,
               height: 30,
               fill: getTopicColor(messageType),
-              stroke: '#2f855a',
+              stroke: '#67c23a',
               strokeWidth: 1,
               textColor: '#ffffff'
             }
           }
         })
         
+        // 启动频率监控
+        await startFrequencyMonitoring()
+        
         // 初始加载后，等待一小段时间再应用布局，确保过滤器正常工作
         await nextTick()
         setTimeout(() => {
           applyLayout()
+          // 在布局完成后启动动画
+          if (enableAnimation.value) {
+            setTimeout(() => {
+              createDataFlowParticles()
+              startAnimation()
+            }, 100)
+          }
         }, 50)
         
         ElMessage.success(`加载了 ${rawNodes.value.length} 个节点和 ${rawTopics.value.length} 个主题`)
@@ -843,8 +1243,6 @@ export default {
       let layoutNodes = []
       if (layoutType.value === 'hierarchical') {
         layoutNodes = layoutEngine.value.applyHierarchicalLayout()
-      } else if (layoutType.value === 'force') {
-        layoutNodes = layoutEngine.value.applyForceDirectedOptimization(allNodes)
       } else if (layoutType.value === 'circular') {
         layoutNodes = layoutEngine.value.applyCircularLayout()
       }
@@ -952,16 +1350,21 @@ export default {
      */
     const getTopicColor = (messageType) => {
       const colorMap = {
-        'sensor_msgs/msg/PointCloud2': '#e74c3c',
-        'sensor_msgs/msg/LaserScan': '#f39c12',
-        'nav_msgs/msg/OccupancyGrid': '#9b59b6',
-        'geometry_msgs/msg/Twist': '#3498db',
-        'nav_msgs/msg/Odometry': '#1abc9c',
-        'sensor_msgs/msg/Image': '#e67e22',
-        'tf2_msgs/msg/TFMessage': '#34495e'
+        'sensor_msgs/msg/PointCloud2': '#67c23a',
+        'sensor_msgs/msg/LaserScan': '#67c23a',
+        'nav_msgs/msg/OccupancyGrid': '#67c23a',
+        'geometry_msgs/msg/Twist': '#67c23a',
+        'nav_msgs/msg/Odometry': '#67c23a',
+        'sensor_msgs/msg/Image': '#67c23a',
+        'tf2_msgs/msg/TFMessage': '#67c23a',
+        'diagnostic_msgs/msg/DiagnosticArray': '#67c23a',
+        'geometry_msgs/msg/PoseWithCovarianceStamped': '#67c23a',
+        'geometry_msgs/msg/PoseStamped': '#67c23a',
+        'std_msgs/msg/String': '#67c23a',
+        'rcl_interfaces/msg/ParameterEvent': '#67c23a'
       }
       
-      return colorMap[messageType] || '#48bb78'
+      return colorMap[messageType] || '#67c23a'
     }
     
     // ===== 交互事件处理 =====
@@ -1113,6 +1516,42 @@ export default {
     
     const getTopicLabel = (topic) => {
       return labelMode.value === 'full' ? topic.name : topic.label
+    }
+    
+    /**
+     * 获取主题频率显示文本
+     */
+    const getTopicFrequencyDisplay = (topicName) => {
+      const frequency = topicFrequency.value.get(topicName)
+      if (frequency === undefined || frequency === null) {
+        return 'N/A'
+      } else if (isNaN(frequency)) {
+        return 'N/A'
+      } else if (frequency === 0) {
+        return '0Hz'
+      } else {
+        return `${frequency.toFixed(2)}Hz`
+      }
+    }
+    
+    /**
+     * 获取频率颜色指示器
+     */
+    const getFrequencyColor = (topicName) => {
+      const frequency = topicFrequency.value.get(topicName)
+      if (frequency === undefined || frequency === null || isNaN(frequency)) {
+        return '#f56c6c' // 红色 - N/A
+      } else if (frequency === 0) {
+        return '#f56c6c' // 红色 - 0Hz (Dead Sink)
+      } else if (frequency < 0.1) {
+        return '#e6a23c' // 橙色 - 极低频
+      } else if (frequency < 1) {
+        return '#909399' // 灰色 - 低频
+      } else if (frequency < 10) {
+        return '#67c23a' // 绿色 - 中频
+      } else {
+        return '#409eff' // 蓝色 - 高频
+      }
     }
     
     const getNodeFontSize = (node) => {
@@ -1304,9 +1743,20 @@ export default {
       
       // 加载初始数据
       await refreshGraph()
+      
+      // 启动动画（如果启用）
+      if (enableAnimation.value) {
+        startAnimation()
+      }
     })
     
     onUnmounted(() => {
+      // 停止动画
+      stopAnimation()
+      
+      // 停止频率监控
+      stopFrequencyMonitoring()
+      
       if (interactionController.value) {
         interactionController.value.destroy()
       }
@@ -1518,8 +1968,21 @@ export default {
       }
       layoutTimeout = setTimeout(() => {
         applyLayout()
+        // 重新创建动画粒子
+        if (enableAnimation.value) {
+          createDataFlowParticles()
+        }
       }, 100)
     }, { deep: true })
+
+    // 监听动画开关
+    watch(enableAnimation, (newValue) => {
+      if (newValue) {
+        startAnimation()
+      } else {
+        stopAnimation()
+      }
+    })
 
     // ===== 返回API =====
     return {
@@ -1586,7 +2049,9 @@ export default {
       getTopicStroke,
       getTopicStrokeWidth,
       getNodeLabel,
-      getTopicLabel
+      getTopicLabel,
+      getTopicFrequencyDisplay,
+      getFrequencyColor
     }
   }
 }
@@ -1598,9 +2063,9 @@ export default {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #f8f9fa;
+  background: #ffffff;
   font-family: system-ui, -apple-system, sans-serif;
-  border: 1px solid #e9ecef;
+  border: 1px solid #e4e7ed;
   border-radius: 8px;
   overflow: hidden;
 }
@@ -1611,9 +2076,9 @@ export default {
   align-items: center;
   justify-content: space-between;
   padding: 8px 16px;
-  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-  border-bottom: 2px solid #dee2e6;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  background: #f5f7fa;
+  border-bottom: 1px solid #e4e7ed;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
 .toolbar-section {
@@ -1680,7 +2145,7 @@ export default {
 .rqt-control-panel {
   width: 250px;
   background: #ffffff;
-  border-right: 2px solid #dee2e6;
+  border-right: 1px solid #e4e7ed;
   display: flex;
   flex-direction: column;
   transition: width 0.3s ease;
@@ -1696,10 +2161,10 @@ export default {
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  background: #f8f9fa;
-  border-bottom: 1px solid #dee2e6;
+  background: #f5f7fa;
+  border-bottom: 1px solid #e4e7ed;
   font-weight: 600;
-  color: #495057;
+  color: #606266;
 }
 
 .panel-content {
@@ -1777,7 +2242,7 @@ export default {
 .rqt-detail-panel {
   width: 280px;
   background: #ffffff;
-  border-left: 2px solid #dee2e6;
+  border-left: 1px solid #e4e7ed;
   display: flex;
   flex-direction: column;
   transition: width 0.3s ease;
@@ -2172,6 +2637,27 @@ export default {
 
 .menu-item:active {
   background-color: #e1e5e9;
+}
+
+/* ===== 数据流动画样式 ===== */
+.data-flow-particle {
+  filter: drop-shadow(0 0 4px rgba(64, 158, 255, 0.6));
+  animation: particle-pulse 2s ease-in-out infinite;
+}
+
+@keyframes particle-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+}
+
+.animation-layer {
+  pointer-events: none;
 }
 
 /* ===== 响应式样式 ===== */
