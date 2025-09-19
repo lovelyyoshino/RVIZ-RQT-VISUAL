@@ -7,6 +7,10 @@
           <el-icon><Plus /></el-icon>
           添加数据源
         </el-button>
+        <el-button size="small" @click="debugRosConnection" type="info">
+          <el-icon><Refresh /></el-icon>
+          调试连接
+        </el-button>
 
         <el-button-group size="small">
           <el-button @click="pauseChart" :type="isPaused ? 'primary' : 'default'">
@@ -53,9 +57,15 @@
       <div v-if="showTopicSelector" class="topic-selector-panel">
         <div class="panel-header">
           <h4>选择数据源</h4>
-          <el-button size="small" text @click="showTopicSelector = false">
-            <el-icon><Close /></el-icon>
-          </el-button>
+          <div class="panel-header-actions">
+            <el-button size="small" @click="loadTopics" type="primary">
+              <el-icon><Refresh /></el-icon>
+              刷新
+            </el-button>
+            <el-button size="small" text @click="showTopicSelector = false">
+              <el-icon><Close /></el-icon>
+            </el-button>
+          </div>
         </div>
         <div class="panel-content">
           <div class="topic-search">
@@ -70,14 +80,42 @@
               </template>
             </el-input>
           </div>
-          <div class="topic-tree">
-            <div v-for="topic in filteredAvailableTopics" :key="topic.value" class="topic-item">
+          <div v-if="filteredAvailableTopics.length === 0" class="empty-state">
+            <div class="empty-icon">📡</div>
+            <p>未找到可用的topic</p>
+            <p class="empty-hint">请确保：</p>
+            <ul class="empty-checklist">
+              <li>ROS系统正在运行</li>
+              <li>有节点在发布数据</li>
+              <li>网络连接正常</li>
+            </ul>
+            <el-button @click="debugRosConnection" type="primary" size="small">
+              <el-icon><Refresh /></el-icon>
+              诊断连接
+            </el-button>
+          </div>
+          <div v-else class="topic-tree">
+            <div class="topic-stats">
+              <span class="stats-item">总计: {{ availableTopics.length }}</span>
+              <span class="stats-item active">活跃: {{ availableTopics.filter(t => t.isActive).length }}</span>
+            </div>
+            <div v-for="topic in filteredAvailableTopics" :key="topic.value" class="topic-item" :class="{ 'inactive': !topic.isActive }">
               <div class="topic-name" @click="expandTopic(topic)">
                 <el-icon class="expand-icon" :class="{ 'expanded': expandedTopics.includes(topic.value) }">
                   <ArrowRight />
                 </el-icon>
-                <span>{{ topic.label }}</span>
-                <span class="topic-type">{{ topic.messageType }}</span>
+                <div class="topic-info">
+                  <div class="topic-main">
+                    <span class="topic-label">{{ topic.label }}</span>
+                    <el-tag :type="topic.isActive ? 'success' : 'info'" size="small" class="status-tag">
+                      {{ topic.status }}
+                    </el-tag>
+                  </div>
+                  <div class="topic-details">
+                    <span class="topic-path">{{ topic.fullName }}</span>
+                    <span class="topic-type">{{ topic.messageType }}</span>
+                  </div>
+                </div>
               </div>
               <div v-if="expandedTopics.includes(topic.value)" class="topic-fields">
                 <div
@@ -374,9 +412,13 @@ export default {
 
     const filteredAvailableTopics = computed(() => {
       if (!topicSearchText.value) return availableTopics.value
+
+      const searchText = topicSearchText.value.toLowerCase()
       return availableTopics.value.filter(topic =>
-        topic.label.toLowerCase().includes(topicSearchText.value.toLowerCase()) ||
-        topic.value.toLowerCase().includes(topicSearchText.value.toLowerCase())
+        topic.label.toLowerCase().includes(searchText) ||
+        topic.value.toLowerCase().includes(searchText) ||
+        (topic.fullName && topic.fullName.toLowerCase().includes(searchText)) ||
+        topic.messageType.toLowerCase().includes(searchText)
       )
     })
 
@@ -751,52 +793,318 @@ export default {
     // 加载真实的topic数据
     const loadTopics = async () => {
       try {
+        console.log('[ChartPanel] 开始加载真实的ROS topics...')
+
         if (!rosbridge.isConnected) {
-          console.warn('[ChartPanel] ROS未连接，无法获取topic列表')
+          console.warn('[ChartPanel] ROS未连接，尝试初始化连接...')
+          if (rosbridge.initializeConnection) {
+            await rosbridge.initializeConnection()
+            await new Promise(resolve => setTimeout(resolve, 2000))
+          }
+
+          if (!rosbridge.isConnected) {
+            console.error('[ChartPanel] ROS连接失败')
+            ElMessage.error('ROS连接失败，请检查服务器状态和网络连接')
+            availableTopics.value = []
+            return
+          }
+        }
+
+        // 并行获取topics、类型和频率信息
+        console.log('[ChartPanel] 获取ROS系统信息...')
+        const [topicsData, topicTypes, topicFrequencies] = await Promise.all([
+          rosbridge.getTopics(),
+          rosbridge.getTopicTypes(),
+          rosbridge.getTopicFrequencies()
+        ])
+
+        console.log('[ChartPanel] 获取到的原始数据:')
+        console.log('- Topics Data:', topicsData, '类型:', typeof topicsData, '是数组:', Array.isArray(topicsData))
+        console.log('- Topic Types:', topicTypes, '类型:', typeof topicTypes)
+        console.log('- Topic Frequencies:', topicFrequencies, '类型:', typeof topicFrequencies)
+
+        // 检查第一个topic的类型
+        if (topicsData && topicsData.length > 0) {
+          console.log('- 第一个topic:', topicsData[0], '类型:', typeof topicsData[0])
+        }
+
+        if (!topicsData || !Array.isArray(topicsData) || topicsData.length === 0) {
+          console.error('[ChartPanel] 没有获取到任何topic')
+          ElMessage.warning('当前ROS系统中没有发现任何topic，请检查ROS节点是否正在运行')
+          availableTopics.value = []
           return
         }
 
-        // 获取topic列表和类型
-        const topics = await rosbridge.getTopics()
-        const topicTypes = await rosbridge.getTopicTypes()
+        // 处理topic数据 - 支持两种格式：字符串数组或TopicInfo对象数组
+        let topics, topicTypesMap
+        if (typeof topicsData[0] === 'string') {
+          // 旧格式：字符串数组
+          topics = topicsData
+          topicTypesMap = topicTypes || {}
+        } else {
+          // 新格式：TopicInfo对象数组
+          topics = topicsData.map(topic => topic.name)
+          topicTypesMap = {}
+          topicsData.forEach(topic => {
+            topicTypesMap[topic.name] = topic.message_type
+          })
+        }
 
-        console.log('[ChartPanel] 获取到topics:', topics)
-        console.log('[ChartPanel] 获取到topicTypes:', topicTypes)
+        console.log('[ChartPanel] 处理后的数据:')
+        console.log('- Topics:', topics)
+        console.log('- Topic Types Map:', topicTypesMap)
 
-        if (topics && topicTypes) {
-          const topicList = []
+        if (!topicTypesMap || Object.keys(topicTypesMap).length === 0) {
+          console.error('[ChartPanel] 没有获取到topic类型信息')
+          ElMessage.warning('无法获取topic类型信息')
+          availableTopics.value = []
+          return
+        }
 
-          // 过滤支持的数据类型
-          const supportedTypes = [
-            'nav_msgs/msg/Odometry',
-            'geometry_msgs/msg/Twist',
-            'sensor_msgs/msg/Imu',
-            'sensor_msgs/msg/JointState',
-            'std_msgs/msg/Float64',
-            'std_msgs/msg/Int32',
-            'std_msgs/msg/String',
-            'std_msgs/msg/Bool'
-          ]
+        // 支持的数据类型（适合绘制图表的消息类型）
+        const supportedTypes = [
+          // Navigation messages
+          'nav_msgs/msg/Odometry',
+          'nav_msgs/msg/Path',
+          'nav_msgs/msg/OccupancyGrid',
 
-          topics.forEach(topic => {
-            const messageType = topicTypes[topic]
-            if (messageType && supportedTypes.includes(messageType)) {
-              topicList.push({
-                value: topic,
-                label: topic.split('/').pop() || topic, // 使用topic名的最后部分作为标签
-                messageType: messageType
-              })
+          // Geometry messages
+          'geometry_msgs/msg/Twist',
+          'geometry_msgs/msg/TwistStamped',
+          'geometry_msgs/msg/Pose',
+          'geometry_msgs/msg/PoseStamped',
+          'geometry_msgs/msg/PoseWithCovariance',
+          'geometry_msgs/msg/PoseWithCovarianceStamped',
+          'geometry_msgs/msg/Transform',
+          'geometry_msgs/msg/TransformStamped',
+          'geometry_msgs/msg/Vector3',
+          'geometry_msgs/msg/Vector3Stamped',
+          'geometry_msgs/msg/Point',
+          'geometry_msgs/msg/PointStamped',
+          'geometry_msgs/msg/Quaternion',
+          'geometry_msgs/msg/QuaternionStamped',
+          'geometry_msgs/msg/Wrench',
+          'geometry_msgs/msg/WrenchStamped',
+
+          // Sensor messages
+          'sensor_msgs/msg/Imu',
+          'sensor_msgs/msg/JointState',
+          'sensor_msgs/msg/LaserScan',
+          'sensor_msgs/msg/BatteryState',
+          'sensor_msgs/msg/Temperature',
+          'sensor_msgs/msg/MagneticField',
+          'sensor_msgs/msg/FluidPressure',
+          'sensor_msgs/msg/Illuminance',
+          'sensor_msgs/msg/Range',
+          'sensor_msgs/msg/RelativeHumidity',
+          'sensor_msgs/msg/TimeReference',
+          'sensor_msgs/msg/NavSatFix',
+          'sensor_msgs/msg/Joy',
+
+          // Standard messages
+          'std_msgs/msg/Float64',
+          'std_msgs/msg/Float32',
+          'std_msgs/msg/Int32',
+          'std_msgs/msg/Int64',
+          'std_msgs/msg/Int16',
+          'std_msgs/msg/Int8',
+          'std_msgs/msg/UInt32',
+          'std_msgs/msg/UInt64',
+          'std_msgs/msg/UInt16',
+          'std_msgs/msg/UInt8',
+          'std_msgs/msg/Bool',
+          'std_msgs/msg/Byte',
+          'std_msgs/msg/Char',
+          'std_msgs/msg/String',
+
+          // TF messages
+          'tf2_msgs/msg/TFMessage',
+
+          // Action and service types that might contain numerical data
+          'actionlib_msgs/msg/GoalStatus',
+          'actionlib_msgs/msg/GoalStatusArray',
+
+          // Diagnostic messages
+          'diagnostic_msgs/msg/DiagnosticArray',
+          'diagnostic_msgs/msg/DiagnosticStatus',
+          'diagnostic_msgs/msg/KeyValue',
+
+          // Control messages
+          'control_msgs/msg/JointControllerState',
+          'control_msgs/msg/PidState',
+
+          // Trajectory messages
+          'trajectory_msgs/msg/JointTrajectory',
+          'trajectory_msgs/msg/JointTrajectoryPoint'
+        ]
+
+        const topicList = []
+        let activeTopicCount = 0
+        let supportedTopicCount = 0
+        const unsupportedTypes = new Set()
+        const filteredTopics = []
+
+        console.log(`[ChartPanel] 开始过滤 ${topics.length} 个topic...`)
+
+        topics.forEach(topic => {
+          // 确保topic是字符串类型
+          const topicName = typeof topic === 'string' ? topic : String(topic)
+          const messageType = topicTypesMap[topicName]
+
+          console.log(`[ChartPanel] 检查topic: ${topicName} (原始:${topic}), 类型: ${messageType}`)
+
+          if (!messageType) {
+            console.warn(`[ChartPanel] Topic ${topicName} 没有类型信息`)
+            return
+          }
+
+          // 检查是否是明确支持的类型
+          const isExplicitlySupported = supportedTypes.includes(messageType)
+
+          // 启发式判断：如果消息类型可能包含数值字段
+          const isLikelyNumeric = messageType && (
+            messageType.includes('msgs/msg/') && (
+              messageType.includes('Float') ||
+              messageType.includes('Int') ||
+              messageType.includes('UInt') ||
+              messageType.includes('Double') ||
+              messageType.includes('Bool') ||
+              messageType.includes('Twist') ||
+              messageType.includes('Pose') ||
+              messageType.includes('Point') ||
+              messageType.includes('Vector') ||
+              messageType.includes('Quaternion') ||
+              messageType.includes('Transform') ||
+              messageType.includes('Imu') ||
+              messageType.includes('Odom') ||
+              messageType.includes('Joint') ||
+              messageType.includes('Laser') ||
+              messageType.includes('Battery') ||
+              messageType.includes('Temperature') ||
+              messageType.includes('Pressure') ||
+              messageType.includes('Range') ||
+              messageType.includes('Nav')
+            )
+          )
+
+          if (isExplicitlySupported || isLikelyNumeric) {
+            supportedTopicCount++
+
+            // 检查topic是否有数据传输（频率>0）
+            const frequency = topicFrequencies && topicFrequencies[topicName] ? topicFrequencies[topicName] : 0
+            let isActive = frequency > 0
+            
+            // 如果没有频率信息，尝试通过其他方式判断是否活跃
+            // 比如检查topic名称是否包含活跃的标识
+            if (!isActive && !topicFrequencies) {
+              // 如果完全没有频率信息，假设所有topic都是活跃的（用于测试）
+              const isLikelyActive = topicName.includes('odom') || 
+                                   topicName.includes('pose') || 
+                                   topicName.includes('scan') || 
+                                   topicName.includes('cloud') ||
+                                   topicName.includes('cmd_vel') ||
+                                   topicName.includes('map')
+              if (isLikelyActive) {
+                isActive = true
+              }
+            }
+
+            const supportType = isExplicitlySupported ? '明确支持' : '启发式支持'
+            console.log(`[ChartPanel] ✅ ${supportType}的topic: ${topicName}, 频率: ${frequency} Hz`)
+
+            if (isActive) {
+              activeTopicCount++
+            }
+
+            // 创建更好的显示标签
+            let label = topicName
+            try {
+              if (typeof topicName === 'string' && topicName.startsWith('/')) {
+                const parts = topicName.split('/')
+                label = parts[parts.length - 1] || topicName
+              }
+            } catch (error) {
+              console.warn(`[ChartPanel] 处理topic标签失败: ${topicName}`, error)
+              label = topicName
+            }
+
+            topicList.push({
+              value: topicName,
+              label: label,
+              fullName: topicName,
+              messageType: messageType,
+              frequency: frequency,
+              isActive: isActive,
+              status: isActive ? `${frequency.toFixed(1)} Hz` : '无数据',
+              supportType: supportType
+            })
+          } else {
+            unsupportedTypes.add(messageType)
+            filteredTopics.push({topic: topicName, messageType})
+            console.log(`[ChartPanel] ❌ 不支持的topic: ${topicName}, 类型: ${messageType}`)
+          }
+        })
+
+        console.log(`[ChartPanel] 过滤结果:`)
+        console.log(`- 总topic数: ${topics.length}`)
+        console.log(`- 支持的topic数: ${supportedTopicCount}`)
+        console.log(`- 活跃的topic数: ${activeTopicCount}`)
+        console.log(`- 不支持的消息类型:`, Array.from(unsupportedTypes))
+        console.log(`- 被过滤的topic样例:`, filteredTopics.slice(0, 5))
+
+        // 按频率排序，活跃的topic排在前面
+        topicList.sort((a, b) => {
+          if (a.isActive && !b.isActive) return -1
+          if (!a.isActive && b.isActive) return 1
+          return b.frequency - a.frequency
+        })
+
+        availableTopics.value = topicList
+
+        console.log(`[ChartPanel] 最终结果: topicList长度 = ${topicList.length}`)
+
+        if (supportedTopicCount === 0) {
+          console.error(`[ChartPanel] 在 ${topics.length} 个topic中没有找到支持的消息类型`)
+          console.error('[ChartPanel] 不支持的类型:', Array.from(unsupportedTypes))
+
+          // 临时降级方案：如果没有找到支持的类型，显示前几个topic让用户测试
+          console.warn('[ChartPanel] 启用兼容模式，显示前几个topic供测试')
+          const fallbackTopics = topics.slice(0, Math.min(10, topics.length)).map(topic => {
+            const topicName = typeof topic === 'string' ? topic : String(topic)
+            let label = topicName
+            try {
+              if (typeof topicName === 'string' && topicName.includes('/')) {
+                label = topicName.split('/').pop() || topicName
+              }
+            } catch (error) {
+              console.warn('[ChartPanel] 兼容模式标签处理失败:', topicName, error)
+              label = topicName
+            }
+
+            return {
+              value: topicName,
+              label: label,
+              fullName: topicName,
+              messageType: topicTypesMap[topicName] || 'unknown',
+              frequency: 0,
+              isActive: false,
+              status: '兼容模式'
             }
           })
 
-          availableTopics.value = topicList
-          console.log('[ChartPanel] 加载了', topicList.length, '个可用topic')
+          availableTopics.value = fallbackTopics
+          ElMessage.warning(`没有找到明确支持的消息类型，显示前 ${fallbackTopics.length} 个topic供测试。不支持的类型包括: ${Array.from(unsupportedTypes).slice(0, 3).join(', ')}`)
+        } else {
+          ElMessage.success(`发现 ${supportedTopicCount} 个支持的topic（${activeTopicCount} 个活跃，${supportedTopicCount - activeTopicCount} 个无数据传输）`)
         }
+
       } catch (error) {
         console.error('[ChartPanel] 加载topic失败:', error)
-        ElMessage.warning('无法获取topic列表，请检查ROS连接')
+        ElMessage.error(`获取topic列表失败: ${error.message}`)
+        availableTopics.value = []
       }
     }
+
 
     onMounted(async () => {
       await nextTick()
@@ -809,8 +1117,21 @@ export default {
       // 定期清理过期数据
       setInterval(cleanupDataSeries, 5000)
 
-      // 加载真实的topic数据
-      loadTopics()
+      // 初始化ROS连接
+      console.log('[ChartPanel] 初始化ROS连接...')
+      if (rosbridge.initializeConnection) {
+        try {
+          await rosbridge.initializeConnection()
+          console.log('[ChartPanel] ROS连接初始化完成')
+        } catch (error) {
+          console.error('[ChartPanel] ROS连接初始化失败:', error)
+        }
+      }
+
+      // 等待连接建立后加载topic数据
+      setTimeout(() => {
+        loadTopics()
+      }, 2000)
 
       // 定期刷新topic列表（每30秒）
       setInterval(loadTopics, 30000)
@@ -824,6 +1145,55 @@ export default {
       subscriptions.clear()
       window.removeEventListener('resize', updateChartSize)
     })
+
+    // 调试ROS连接的函数
+    const debugRosConnection = async () => {
+      console.log('=== ROS连接调试开始 ===')
+      console.log('1. 连接状态:', rosbridge.isConnected)
+      console.log('2. rosbridge对象:', rosbridge)
+
+      if (!rosbridge.isConnected) {
+        console.log('3. 尝试重新连接...')
+        try {
+          await rosbridge.initializeConnection()
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          console.log('4. 重连后状态:', rosbridge.isConnected)
+        } catch (error) {
+          console.error('5. 重连失败:', error)
+          ElMessage.error('ROS重连失败: ' + error.message)
+          return
+        }
+      }
+
+      if (rosbridge.isConnected) {
+        console.log('6. 开始获取ROS数据...')
+        try {
+          // 测试基本API调用
+          const topics = await rosbridge.getTopics()
+          console.log('7. Topics返回:', topics)
+
+          const topicTypes = await rosbridge.getTopicTypes()
+          console.log('8. TopicTypes返回:', topicTypes)
+
+          const topicFrequencies = await rosbridge.getTopicFrequencies()
+          console.log('9. TopicFrequencies返回:', topicFrequencies)
+
+          if (topics && topics.length > 0) {
+            ElMessage.success(`成功获取到 ${topics.length} 个topic`)
+            console.log('10. 手动触发loadTopics...')
+            loadTopics()
+          } else {
+            ElMessage.warning('ROS连接正常，但没有找到任何topic')
+          }
+        } catch (error) {
+          console.error('11. API调用失败:', error)
+          ElMessage.error('ROS API调用失败: ' + error.message)
+        }
+      } else {
+        ElMessage.error('ROS连接失败，请检查服务器状态')
+      }
+      console.log('=== ROS连接调试结束 ===')
+    }
 
     return {
       // DOM引用
@@ -869,7 +1239,11 @@ export default {
       handleZoom,
       startPan,
       handlePan,
-      endPan
+      endPan,
+
+      // 调试方法
+      debugRosConnection,
+      loadTopics
     }
   },
 
@@ -977,6 +1351,12 @@ export default {
   font-weight: 500;
 }
 
+.panel-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .panel-content {
   flex: 1;
   padding: 8px;
@@ -992,19 +1372,127 @@ export default {
   space-y: 4px;
 }
 
+.topic-stats {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 8px;
+  background: rgba(148, 163, 184, 0.05);
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.stats-item {
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.stats-item.active {
+  color: #00ff88;
+  font-weight: 500;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: #94a3b8;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.6;
+}
+
+.empty-state p {
+  margin: 8px 0;
+  font-size: 14px;
+}
+
+.empty-hint {
+  color: #64748b;
+  font-size: 12px;
+  margin-top: 16px;
+}
+
+.empty-checklist {
+  text-align: left;
+  margin: 12px auto;
+  display: inline-block;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.empty-checklist li {
+  margin: 4px 0;
+}
+
 .topic-item {
   margin-bottom: 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  transition: all 0.2s ease;
+}
+
+.topic-item:hover {
+  border-color: rgba(148, 163, 184, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.topic-item.inactive {
+  opacity: 0.6;
+  background: rgba(148, 163, 184, 0.05);
 }
 
 .topic-name {
   display: flex;
   align-items: center;
-  padding: 6px 8px;
-  background: rgba(148, 163, 184, 0.1);
-  border-radius: 6px;
+  padding: 8px;
   cursor: pointer;
   transition: all 0.2s;
-  font-size: 12px;
+}
+
+.topic-info {
+  flex: 1;
+  margin-left: 8px;
+}
+
+.topic-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.topic-label {
+  font-weight: 500;
+  color: #e2e8f0;
+}
+
+.status-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+}
+
+.topic-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.topic-path {
+  font-size: 11px;
+  color: #94a3b8;
+  font-family: 'Courier New', monospace;
+}
+
+.topic-type {
+  font-size: 10px;
+  color: #64748b;
+  background: rgba(148, 163, 184, 0.2);
+  padding: 1px 4px;
+  border-radius: 3px;
+  align-self: flex-start;
 }
 
 .topic-name:hover {
