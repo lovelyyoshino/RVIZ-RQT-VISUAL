@@ -203,11 +203,12 @@
                 <el-icon><CloseBold /></el-icon>
                 退出全屏
               </el-button>
+              <div class="esc-hint">按 ESC 键退出</div>
             </div>
 
             <div class="panel-header" @mousedown.stop="startDragFromHeader($event, panel.id)">
               <h4>{{ panel.title }}</h4>
-              <div class="panel-controls" v-show="!panel.fullscreen">
+              <div class="panel-controls">
                 <el-button size="small" text @click="zoomOutPanel(panel.id)" :disabled="panel.zoomLevel <= 0.5 || panel.fullscreen">
                   <el-icon><ZoomOut /></el-icon>
                 </el-button>
@@ -974,6 +975,43 @@ export default {
       }
       return names[panelType] || panelType
     }
+
+    // ESC键退出全屏功能
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        // 检查拖拽模式下是否有全屏面板
+        if (isDragMode.value) {
+          const fullscreenPanel = dragPanels.value.find(p => p.fullscreen)
+          if (fullscreenPanel) {
+            togglePanelFullscreen(fullscreenPanel.id)
+            event.preventDefault()
+            return
+          }
+        }
+
+        // 检查传统模式下是否有全屏面板
+        const hasFullscreenPanel = Object.values(fullscreenPanels.value).some(Boolean)
+        if (hasFullscreenPanel) {
+          // 退出所有全屏面板
+          Object.keys(fullscreenPanels.value).forEach(panelType => {
+            if (fullscreenPanels.value[panelType]) {
+              toggleTraditionalPanelFullscreen(panelType)
+            }
+          })
+          event.preventDefault()
+        }
+      }
+    }
+
+    // 组件挂载时添加键盘监听器
+    onMounted(() => {
+      document.addEventListener('keydown', handleKeyDown)
+    })
+
+    // 组件卸载时移除键盘监听器
+    onUnmounted(() => {
+      document.removeEventListener('keydown', handleKeyDown)
+    })
     
     return {
       // DOM引用
@@ -1572,41 +1610,162 @@ export default {
 /* 全屏模式样式 */
 .draggable-panel.fullscreen {
   border-radius: 0;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 10000 !important;
 }
 
 .fullscreen-exit-btn {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  z-index: 10001;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(10px);
-  border-radius: 8px;
-  padding: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
+  position: fixed !important;
+  top: 30px !important;
+  right: 30px !important;
+  z-index: 10002 !important;
+  background: rgba(15, 23, 42, 0.95) !important;
+  backdrop-filter: blur(20px) !important;
+  border-radius: 16px !important;
+  padding: 16px !important;
+  border: 3px solid rgba(255, 59, 48, 0.5) !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(255, 59, 48, 0.3) !important;
+  animation: fade-in 0.3s ease-out, pulse-glow 2s infinite !important;
+  pointer-events: all !important;
 }
 
 .fullscreen-exit-btn .el-button {
-  background: rgba(220, 38, 38, 0.8);
-  border: none;
-  color: white;
-  font-weight: 500;
+  background: linear-gradient(45deg, rgba(255, 59, 48, 0.9), rgba(220, 38, 38, 1)) !important;
+  border: none !important;
+  color: white !important;
+  font-weight: 700 !important;
+  font-size: 18px !important;
+  padding: 16px 32px !important;
+  border-radius: 12px !important;
+  box-shadow: 0 6px 16px rgba(255, 59, 48, 0.4) !important;
+  transition: all 0.2s ease !important;
+  min-width: auto !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
 }
 
 .fullscreen-exit-btn .el-button:hover {
-  background: rgba(220, 38, 38, 1);
-  transform: scale(1.05);
+  background: linear-gradient(45deg, rgba(255, 59, 48, 1), rgba(220, 38, 38, 1)) !important;
+  transform: scale(1.1) translateY(-3px) !important;
+  box-shadow: 0 12px 24px rgba(255, 59, 48, 0.5) !important;
 }
 
-/* 全屏模式下隐藏头部控制按钮，只保留标题 */
+.fullscreen-exit-btn .el-button:active {
+  transform: scale(1.05) translateY(-1px) !important;
+}
+
+.esc-hint {
+  margin-top: 8px !important;
+  font-size: 14px !important;
+  color: rgba(255, 255, 255, 0.8) !important;
+  text-align: center !important;
+  font-weight: 500 !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5) !important;
+  animation: gentle-fade 3s infinite !important;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(255, 59, 48, 0.3);
+  }
+  50% {
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(255, 59, 48, 0.5);
+  }
+}
+
+@keyframes gentle-fade {
+  0%, 100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* 全屏模式下的面板头部样式 */
 .draggable-panel.fullscreen .panel-header {
-  background: rgba(15, 23, 42, 0.9);
-  backdrop-filter: blur(20px);
+  background: rgba(15, 23, 42, 0.98) !important;
+  backdrop-filter: blur(20px) !important;
+  border-bottom: 2px solid rgba(148, 163, 184, 0.4) !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5) !important;
+  height: 56px !important;
+  padding: 0 30px !important;
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  z-index: 10001 !important;
+  width: 100vw !important;
 }
 
 .draggable-panel.fullscreen .panel-header h4 {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 20px !important;
+  font-weight: 700 !important;
+  color: #ffffff !important;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* 全屏时显示控制按钮 */
+.draggable-panel.fullscreen .panel-controls {
+  display: flex !important;
+  gap: 12px !important;
+  align-items: center !important;
+}
+
+/* 全屏时的退出按钮特殊样式 */
+.draggable-panel.fullscreen .panel-controls .el-button {
+  min-width: auto !important;
+  padding: 10px 16px !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  border-radius: 8px !important;
+  transition: all 0.2s ease !important;
+}
+
+/* 突出显示全屏切换按钮 */
+.draggable-panel.fullscreen .panel-controls .el-button:has(.CloseBold),
+.draggable-panel.fullscreen .panel-controls .el-button:last-child {
+  background: rgba(255, 59, 48, 0.2) !important;
+  border: 2px solid rgba(255, 59, 48, 0.5) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 12px rgba(255, 59, 48, 0.3) !important;
+}
+
+.draggable-panel.fullscreen .panel-controls .el-button:has(.CloseBold):hover,
+.draggable-panel.fullscreen .panel-controls .el-button:last-child:hover {
+  background: rgba(255, 59, 48, 0.35) !important;
+  border-color: rgba(255, 59, 48, 0.7) !important;
+  transform: scale(1.08) translateY(-2px) !important;
+  box-shadow: 0 6px 16px rgba(255, 59, 48, 0.4) !important;
+}
+
+/* 全屏面板内容区域调整 */
+.draggable-panel.fullscreen .panel-body {
+  margin-top: 56px !important;
+  height: calc(100vh - 56px) !important;
+  padding: 20px !important;
+  overflow: auto !important;
+}
+
+/* 3D场景全屏时特殊处理，无padding避免黑边 */
+.draggable-panel.fullscreen[data-panel="scene"] .panel-body {
+  padding: 0 !important;
 }
 
 /* 传统模式全屏面板样式 */
