@@ -122,10 +122,16 @@
                   v-for="field in getTopicFields(topic)"
                   :key="`${topic.value}.${field.path}`"
                   class="field-item"
-                  @click="addDataSeries(topic.value, field, topic.messageType)"
+                  :class="{
+                    'selected': isFieldSelected(topic.value, field.path),
+                    'disabled': !isFieldPlottable(field.type)
+                  }"
+                  @click="isFieldPlottable(field.type) ? addDataSeries(topic.value, field, topic.messageType) : null"
                 >
                   <span class="field-name">{{ field.name }}</span>
                   <span class="field-type">{{ field.type }}</span>
+                  <span v-if="isFieldSelected(topic.value, field.path)" class="field-status">✓</span>
+                  <span v-else-if="!isFieldPlottable(field.type)" class="field-status">🚫</span>
                 </div>
               </div>
             </div>
@@ -521,9 +527,10 @@ export default {
     }
 
     const onTimeWindowChange = (newWindow) => {
+      console.log(`[ChartPanel] 时间窗口变化: ${timeWindow.value}s -> ${newWindow}s`)
       timeWindow.value = newWindow
-      // 清理过期数据
-      cleanupDataSeries()
+      // 不立即清理数据，让用户可以在不同时间窗口间切换
+      // 数据会在定期清理中自动处理
     }
 
     const resetZoom = () => {
@@ -623,6 +630,27 @@ export default {
       return fields
     }
 
+    // 检查字段是否已被选中
+    const isFieldSelected = (topicName, fieldPath) => {
+      return dataSeries.value.some(s => s.topic === topicName && s.fieldPath === fieldPath)
+    }
+
+    // 检查字段是否可以绘制（只支持数值类型）
+    const isFieldPlottable = (fieldType) => {
+      const plottableTypes = [
+        'float64', 'float32', 'double', 'float',
+        'int32', 'int64', 'int16', 'int8', 'int',
+        'uint32', 'uint64', 'uint16', 'uint8', 'uint',
+        'bool', 'boolean',
+        'computed' // 计算字段
+      ]
+
+      return plottableTypes.includes(fieldType.toLowerCase()) ||
+             fieldType.includes('float') ||
+             fieldType.includes('int') ||
+             fieldType.includes('double')
+    }
+
     // 展开/折叠主题
     const expandTopic = (topic) => {
       const index = expandedTopics.value.indexOf(topic.value)
@@ -633,8 +661,22 @@ export default {
       }
     }
 
-    // 添加数据系列
+    // 添加或移除数据系列（再次点击删除）
     const addDataSeries = (topicName, field, messageType) => {
+      // 检查是否已经存在相同的数据系列
+      const existingSeriesIndex = dataSeries.value.findIndex(s =>
+        s.topic === topicName && s.fieldPath === field.path
+      )
+
+      if (existingSeriesIndex !== -1) {
+        // 如果已经存在，删除它
+        const existingSeries = dataSeries.value[existingSeriesIndex]
+        removeDataSeries(existingSeries.id)
+        ElMessage.info(`已移除数据系列: ${field.name}`)
+        return
+      }
+
+      // 如果不存在，添加新的数据系列
       const seriesId = `${topicName}_${field.path}_${++seriesIdCounter}`
       const color = predefinedColors[colorIndex % predefinedColors.length]
       colorIndex++
@@ -659,7 +701,6 @@ export default {
         subscribeToTopic(topicName, messageType, seriesId)
       }
 
-      showTopicSelector.value = false
       ElMessage.success(`已添加数据系列: ${field.name}`)
     }
 
@@ -783,13 +824,24 @@ export default {
 
     // 清理数据系列
     const cleanupDataSeries = () => {
-      // 清理过期数据点
+      // 保留比当前时间窗口更长的历史数据，以支持时间窗口切换
+      // 保留最长时间窗口的3倍数据，确保用户切换时间窗口时数据仍然可用
+      const maxHistoryTime = Math.max(timeWindow.value * 3, 600) // 至少保留10分钟
       const now = Date.now()
-      const expiredTime = now - timeWindow.value * 1000
+      const expiredTime = now - maxHistoryTime * 1000
+
+      let totalPointsBefore = 0
+      let totalPointsAfter = 0
 
       dataSeries.value.forEach(series => {
+        totalPointsBefore += series.data.length
         series.data = series.data.filter(point => point.time > expiredTime)
+        totalPointsAfter += series.data.length
       })
+
+      if (totalPointsBefore > totalPointsAfter) {
+        console.log(`[ChartPanel] 清理数据: ${totalPointsBefore} -> ${totalPointsAfter} 个数据点，保留${maxHistoryTime}秒历史`)
+      }
     }
 
     // 更新图表尺寸
@@ -1228,6 +1280,8 @@ export default {
       expandedTopics,
       expandTopic,
       getTopicFields,
+      isFieldSelected,
+      isFieldPlottable,
 
       // 数据系列
       dataSeries,
@@ -1554,6 +1608,28 @@ export default {
   transform: translateX(4px);
 }
 
+.field-item.selected {
+  background: rgba(0, 212, 255, 0.2);
+  border: 1px solid rgba(0, 212, 255, 0.5);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.3);
+}
+
+.field-item.selected:hover {
+  background: rgba(0, 212, 255, 0.3);
+}
+
+.field-item.disabled {
+  background: rgba(148, 163, 184, 0.1);
+  color: #64748b;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.field-item.disabled:hover {
+  background: rgba(148, 163, 184, 0.1);
+  transform: none;
+}
+
 .field-name {
   color: #e2e8f0;
   font-weight: 500;
@@ -1565,6 +1641,20 @@ export default {
   background: rgba(148, 163, 184, 0.2);
   padding: 1px 4px;
   border-radius: 3px;
+}
+
+.field-status {
+  font-size: 12px;
+  margin-left: 8px;
+  font-weight: bold;
+}
+
+.field-item.selected .field-status {
+  color: #00ff88;
+}
+
+.field-item.disabled .field-status {
+  color: #ff4757;
 }
 
 /* 图例面板样式 */
