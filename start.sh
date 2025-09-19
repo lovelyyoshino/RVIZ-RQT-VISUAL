@@ -100,10 +100,16 @@ start_docker() {
         echo "🚀 启动容器..."
         docker run -d \
             --name ros-web-viz \
-            -p 3000:8000 \
+            -p 3000:3000 \
             -p 8000:8000 \
             -p 9090:9090 \
             --env-file .env \
+            --network host \
+            --pid host \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+            -e DISPLAY=$DISPLAY \
+            -e QT_X11_NO_MITSHM=1 \
             ros-web-viz
         
         echo ""

@@ -138,7 +138,7 @@ export class HierarchicalLayout {
       }
     })
     
-    console.log(`发现 ${rosNodes.size} 个节点和 ${rosTopics.size} 个主题`)
+    // console.log(`发现 ${rosNodes.size} 个节点和 ${rosTopics.size} 个主题`)
     
     // 分析节点的发布/订阅关系
     const nodeConnections = new Map()
@@ -208,7 +208,7 @@ export class HierarchicalLayout {
       this.levels.set(currentLevel, balancedNodes)
     }
     
-    console.log('优化层级分析完成:', this.levels)
+    // console.log('优化层级分析完成:', this.levels)
   }
   
   /**
@@ -267,7 +267,7 @@ export class HierarchicalLayout {
       this.calculateRecommendedZoom()
     }
     
-    console.log(`分层布局完成，共${layoutNodes.length}个节点，推荐缩放: ${this.recommendedZoom}`)
+    // console.log(`分层布局完成，共${layoutNodes.length}个节点，推荐缩放: ${this.recommendedZoom}`)
     return layoutNodes
   }
   
@@ -555,7 +555,7 @@ export class HierarchicalLayout {
     
     this.config.levelSpacing = optimalLevelSpacing
     
-    console.log(`间距优化完成 - 节点间距: ${this.config.nodeSpacing}, 层级间距: ${this.config.levelSpacing}`)
+    // console.log(`间距优化完成 - 节点间距: ${this.config.nodeSpacing}, 层级间距: ${this.config.levelSpacing}`)
   }
   
   /**

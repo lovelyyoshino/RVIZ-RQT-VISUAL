@@ -141,7 +141,7 @@
                       <span v-if="field.isParsing" class="parsing-spinner">⟳</span>
                       <span v-else>{{ getFieldTypeInfo(field.type).icon }}</span>
                     </span>
-                    <span class="field-name">{{ field.name }}</span>
+                  <span class="field-name">{{ field.name }}</span>
                     <span v-if="!field.isParsing" class="field-type" :class="getFieldTypeInfo(field.type).category">{{ field.type }}</span>
                     <span v-else class="field-type parsing">解析中...</span>
                   </div>
@@ -384,7 +384,7 @@
 
 <script>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { VideoPause, VideoPlay, Delete, Plus, Close, Search, ArrowRight, List, Refresh, View, Hide } from '@element-plus/icons-vue'
+import { VideoPause, VideoPlay, Delete, Plus, Close, Search, ArrowRight, List, Refresh, View, Hide, FullScreen } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRosbridge } from '../../composables/useRosbridge'
 
@@ -401,7 +401,8 @@ export default {
     List,
     Refresh,
     View,
-    Hide
+    Hide,
+    FullScreen
   },
   setup() {
     const rosbridge = useRosbridge()
@@ -564,8 +565,8 @@ export default {
         ticks.push({ x, label, time })
       }
 
-      console.log(`[ChartPanel] X轴刻度计算: 图表宽度=${chartSize.value.width}, 可用宽度=${chartWidth}, 刻度数量=${tickCount}`)
-      console.log(`[ChartPanel] X轴刻度位置:`, ticks.map(t => `${t.label}:${t.x.toFixed(1)}`))
+      // console.log(`[ChartPanel] X轴刻度计算: 图表宽度=${chartSize.value.width}, 可用宽度=${chartWidth}, 刻度数量=${tickCount}`)
+      // console.log(`[ChartPanel] X轴刻度位置:`, ticks.map(t => `${t.label}:${t.x.toFixed(1)}`))
 
       return ticks
     })
@@ -1253,7 +1254,7 @@ export default {
         'bool', 'boolean',
         'computed' // 计算字段
       ]
-      
+
       // 明确不支持的数据类型（点云、图像等）
       const nonPlottableTypes = [
         'pointcloud2', 'point_cloud2', 'pointcloud', 'point_cloud',
@@ -1778,20 +1779,20 @@ export default {
           newHeight = Math.max(rect.height, 300)
         }
 
-        console.log(`[ChartPanel] 正常模式 - 容器尺寸: ${rect.width}x${rect.height}, 使用尺寸: ${newWidth}x${newHeight}`)
+        // console.log(`[ChartPanel] 正常模式 - 容器尺寸: ${rect.width}x${rect.height}, 使用尺寸: ${newWidth}x${newHeight}`)
       }
 
       // 强制最小尺寸
       newWidth = Math.max(newWidth, 400)
       newHeight = Math.max(newHeight, 300)
-
-      chartSize.value = {
-        width: newWidth,
-        height: newHeight
-      }
-
-      console.log(`[ChartPanel] 最终图表尺寸: ${newWidth}x${newHeight}`)
-      console.log(`[ChartPanel] 可用绘图区域: ${newWidth - margin.left - margin.right}x${newHeight - margin.top - margin.bottom}`)
+        
+        chartSize.value = {
+          width: newWidth,
+          height: newHeight
+        }
+        
+      // console.log(`[ChartPanel] 最终图表尺寸: ${newWidth}x${newHeight}`)
+      // console.log(`[ChartPanel] 可用绘图区域: ${newWidth - margin.left - margin.right}x${newHeight - margin.top - margin.bottom}`)
     }
 
     // 检测全屏状态变化
@@ -1805,12 +1806,12 @@ export default {
         document.mozFullScreenElement ||
         document.msFullscreenElement
       )
-
+      
       console.log(`[ChartPanel] 全屏状态变化: ${previousState} -> ${isFullscreen.value}`)
 
       // 立即更新图表尺寸
       nextTick(() => {
-        updateChartSize()
+          updateChartSize()
         console.log(`[ChartPanel] 全屏状态变化后尺寸: ${chartSize.value.width}x${chartSize.value.height}`)
       })
     }
@@ -2152,11 +2153,11 @@ export default {
           updateChartSize()
         }, 16) // 16ms约等于60FPS，提高响应速度
       }
-
+      
       // 监听多种resize相关事件
       window.addEventListener('resize', handleResize)
       window.addEventListener('orientationchange', handleResize)
-
+      
       // 监听全屏状态变化
       document.addEventListener('fullscreenchange', handleFullscreenChange)
       document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
@@ -2172,7 +2173,7 @@ export default {
 
           // 如果尺寸发生显著变化，更新图表
           if (Math.abs(rect.width - currentWidth) > 10 || Math.abs(rect.height - currentHeight) > 10) {
-            console.log(`[ChartPanel] 检测到容器尺寸变化: ${currentWidth}x${currentHeight} -> ${rect.width}x${rect.height}`)
+            // console.log(`[ChartPanel] 检测到容器尺寸变化: ${currentWidth}x${currentHeight} -> ${rect.width}x${rect.height}`)
             updateChartSize()
           }
         }
@@ -2182,7 +2183,7 @@ export default {
       if (window.ResizeObserver) {
         resizeObserver = new ResizeObserver((entries) => {
           for (let entry of entries) {
-            console.log(`[ChartPanel] ResizeObserver: 容器尺寸变化`, entry.contentRect)
+            // console.log(`[ChartPanel] ResizeObserver: 容器尺寸变化`, entry.contentRect)
             updateChartSize()
           }
         })
@@ -2229,7 +2230,7 @@ export default {
       // 移除事件监听器
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('orientationchange', handleResize)
-
+      
       // 移除全屏状态监听器
       document.removeEventListener('fullscreenchange', handleFullscreenChange)
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)

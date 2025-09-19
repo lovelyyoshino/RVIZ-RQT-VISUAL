@@ -1228,7 +1228,7 @@ export default {
     const applyLayout = () => {
       if (!layoutEngine.value) return
       
-      console.log(`应用 ${layoutType.value} 布局算法`)
+      // console.log(`应用 ${layoutType.value} 布局算法`)
       
       // 更新容器尺寸
       updateLayoutSize()
@@ -1237,7 +1237,7 @@ export default {
       const allFilteredNodes = [...filteredNodes.value, ...filteredTopics.value]
       layoutEngine.value.setData(allFilteredNodes, filteredConnections.value)
 
-      console.log(`布局数据: ${filteredNodes.value.length} 个节点, ${filteredTopics.value.length} 个主题, ${filteredConnections.value.length} 个连接`)
+      // console.log(`布局数据: ${filteredNodes.value.length} 个节点, ${filteredTopics.value.length} 个主题, ${filteredConnections.value.length} 个连接`)
       
       // 执行布局
       let layoutNodes = []
@@ -1340,7 +1340,7 @@ export default {
       })
 
       connections.value = newConnections
-      console.log(`计算了 ${newConnections.length} 个连接`)
+      // console.log(`计算了 ${newConnections.length} 个连接`)
     }
     
     /**
@@ -1604,7 +1604,7 @@ export default {
         height
       })
       
-      console.log(`更新布局尺寸: ${width} x ${height}`)
+      // console.log(`更新布局尺寸: ${width} x ${height}`)
     }
     
     /**
