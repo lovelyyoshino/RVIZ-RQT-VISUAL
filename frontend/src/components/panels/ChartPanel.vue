@@ -47,20 +47,21 @@
           <el-icon><Refresh /></el-icon>
           重置缩放
         </el-button>
-        <el-button size="small" @click="toggleFullscreen" style="margin-left: 8px;">
-          <el-icon><FullScreen /></el-icon>
-          {{ isFullscreen ? '退出全屏' : '全屏' }}
-        </el-button>
       </div>
     </div>
 
     <!-- 主内容区 -->
-    <div class="chart-main" :class="{ 'with-sidebar': showTopicSelector || showLegendPanel }">
+    <div class="chart-main" :class="{
+      'with-left-sidebar': showTopicSelector,
+      'with-right-sidebar': showLegendPanel,
+      'with-both-sidebars': showTopicSelector && showLegendPanel
+    }">
 
       <!-- 左侧主题选择面板 -->
       <div v-if="showTopicSelector" class="topic-selector-panel">
         <div class="panel-header">
           <h4>选择数据源</h4>
+          <span v-if="showLegendPanel" class="panel-tip">可同时使用图例面板</span>
           <div class="panel-header-actions">
             <el-button size="small" @click="loadTopics" type="primary">
               <el-icon><Refresh /></el-icon>
@@ -122,6 +123,13 @@
                 </div>
               </div>
               <div v-if="expandedTopics.includes(topic.value)" class="topic-fields">
+                <div class="topic-fields-header">
+                  <el-button size="small" text @click="expandTopic(topic)" class="back-button">
+                    <el-icon><ArrowLeft /></el-icon>
+                    返回
+                  </el-button>
+                  <span class="fields-title">选择字段</span>
+                </div>
                 <div
                   v-for="field in getTopicFields(topic)"
                   :key="`${topic.value}.${field.path}`"
@@ -166,22 +174,22 @@
           <!-- 网格线 -->
           <g class="grid">
             <defs>
-              <pattern :id="`chartGrid-${isFullscreen ? 'fullscreen' : 'normal'}`" 
-                       :width="gridSpacing.x" 
-                       :height="gridSpacing.y" 
+              <pattern id="chartGrid-normal"
+                       :width="gridSpacing.x"
+                       :height="gridSpacing.y"
                        patternUnits="userSpaceOnUse">
-                <path :d="`M ${gridSpacing.x} 0 L 0 0 0 ${gridSpacing.y}`" 
-                      fill="none" 
-                      stroke="#f0f0f0" 
+                <path :d="`M ${gridSpacing.x} 0 L 0 0 0 ${gridSpacing.y}`"
+                      fill="none"
+                      stroke="#f0f0f0"
                       stroke-width="1"/>
               </pattern>
             </defs>
-            <rect 
-              :x="currentMargin.left" 
-              :y="currentMargin.top" 
-              :width="chartSize.width - currentMargin.left - currentMargin.right" 
-              :height="chartSize.height - currentMargin.top - currentMargin.bottom" 
-              :fill="`url(#chartGrid-${isFullscreen ? 'fullscreen' : 'normal'})`" 
+            <rect
+              :x="currentMargin.left"
+              :y="currentMargin.top"
+              :width="chartSize.width - currentMargin.left - currentMargin.right"
+              :height="chartSize.height - currentMargin.top - currentMargin.bottom"
+              fill="url(#chartGrid-normal)" 
             />
           </g>
 
@@ -343,6 +351,7 @@
       <div v-if="showLegendPanel" class="legend-panel">
         <div class="panel-header">
           <h4>图例管理</h4>
+          <span v-if="showTopicSelector" class="panel-tip">可同时使用数据源面板</span>
           <el-button size="small" text @click="showLegendPanel = false">
             <el-icon><Close /></el-icon>
           </el-button>
@@ -384,7 +393,7 @@
 
 <script>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { VideoPause, VideoPlay, Delete, Plus, Close, Search, ArrowRight, List, Refresh, View, Hide, FullScreen } from '@element-plus/icons-vue'
+import { VideoPause, VideoPlay, Delete, Plus, Close, Search, ArrowRight, ArrowLeft, List, Refresh, View, Hide } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRosbridge } from '../../composables/useRosbridge'
 
@@ -398,11 +407,11 @@ export default {
     Close,
     Search,
     ArrowRight,
+    ArrowLeft,
     List,
     Refresh,
     View,
-    Hide,
-    FullScreen
+    Hide
   },
   setup() {
     const rosbridge = useRosbridge()
@@ -414,12 +423,9 @@ export default {
     const chartSize = ref({ width: 300, height: 200 })
     const timeWindow = ref(30) // 30秒时间窗口
     
-    // 全屏时的边距配置 - 最小化边距以最大化利用屏幕空间
-    const fullscreenMargin = { top: 10, right: 10, bottom: 10, left: 10 }
-    
     // 计算当前应该使用的边距
     const currentMargin = computed(() => {
-      return isFullscreen.value ? fullscreenMargin : margin.value
+      return margin.value
     })
     
     // 计算栅格间距，使其与坐标轴刻度匹配
@@ -427,18 +433,11 @@ export default {
       const currentMargins = currentMargin.value
       const chartWidth = chartSize.value.width - currentMargins.left - currentMargins.right
       const chartHeight = chartSize.value.height - currentMargins.top - currentMargins.bottom
-      
-      if (isFullscreen.value) {
-        // 全屏时使用更密集的栅格，充分利用屏幕空间
-        const xSpacing = Math.max(15, Math.floor(chartWidth / 30)) // 至少15px间距，最多30个格子
-        const ySpacing = Math.max(15, Math.floor(chartHeight / 25)) // 至少15px间距，最多25个格子
-        return { x: xSpacing, y: ySpacing }
-      } else {
-        // 正常模式使用适中的栅格密度
-        const xSpacing = Math.max(20, Math.floor(chartWidth / 20)) // 至少20px间距，最多20个格子
-        const ySpacing = Math.max(20, Math.floor(chartHeight / 15)) // 至少20px间距，最多15个格子
-        return { x: xSpacing, y: ySpacing }
-      }
+
+      // 使用适中的栅格密度
+      const xSpacing = Math.max(20, Math.floor(chartWidth / 20)) // 至少20px间距，最多20个格子
+      const ySpacing = Math.max(20, Math.floor(chartHeight / 15)) // 至少20px间距，最多15个格子
+      return { x: xSpacing, y: ySpacing }
     })
     
     // 根据时间窗口获取固定的最大数据点数
@@ -460,7 +459,6 @@ export default {
     const isPaused = ref(false)
     const showTopicSelector = ref(false)
     const showLegendPanel = ref(false)
-    const isFullscreen = ref(false)
     
     // 频率检测和采样管理
     const topicFrequencies = ref(new Map()) // 存储每个topic的实际频率
@@ -680,76 +678,6 @@ export default {
       panOffset.value = { x: 0, y: 0 }
     }
 
-    // 切换全屏状态
-    const toggleFullscreen = async () => {
-      try {
-        if (!isFullscreen.value) {
-          // 进入全屏
-          if (chartContainer.value.requestFullscreen) {
-            await chartContainer.value.requestFullscreen()
-          } else if (chartContainer.value.webkitRequestFullscreen) {
-            await chartContainer.value.webkitRequestFullscreen()
-          } else if (chartContainer.value.mozRequestFullScreen) {
-            await chartContainer.value.mozRequestFullScreen()
-          } else if (chartContainer.value.msRequestFullscreen) {
-            await chartContainer.value.msRequestFullscreen()
-          }
-          
-          // 进入全屏后立即更新尺寸和样式
-          setTimeout(() => {
-            chartSize.value = {
-              width: window.innerWidth,
-              height: window.innerHeight
-            }
-            
-            // 强制应用全屏样式
-            if (chartContainer.value) {
-              chartContainer.value.style.width = '100vw'
-              chartContainer.value.style.height = '100vh'
-              chartContainer.value.style.margin = '0'
-              chartContainer.value.style.borderRadius = '0'
-              chartContainer.value.style.position = 'fixed'
-              chartContainer.value.style.top = '0'
-              chartContainer.value.style.left = '0'
-              chartContainer.value.style.zIndex = '9999'
-            }
-            
-            console.log(`[ChartPanel] 进入全屏 - 设置尺寸: ${chartSize.value.width}x${chartSize.value.height}`)
-            console.log(`[ChartPanel] 全屏栅格间距: x=${gridSpacing.value.x}, y=${gridSpacing.value.y}`)
-            console.log(`[ChartPanel] 全屏边距:`, currentMargin.value)
-          }, 50)
-        } else {
-          // 退出全屏
-          if (document.exitFullscreen) {
-            await document.exitFullscreen()
-          } else if (document.webkitExitFullscreen) {
-            await document.webkitExitFullscreen()
-          } else if (document.mozCancelFullScreen) {
-            await document.mozCancelFullScreen()
-          } else if (document.msExitFullscreen) {
-            await document.msExitFullscreen()
-          }
-          
-          // 退出全屏后重新计算尺寸和清理样式
-          setTimeout(() => {
-            // 清理全屏样式
-            if (chartContainer.value) {
-              chartContainer.value.style.width = ''
-              chartContainer.value.style.height = ''
-              chartContainer.value.style.margin = ''
-              chartContainer.value.style.borderRadius = ''
-              chartContainer.value.style.position = ''
-              chartContainer.value.style.top = ''
-              chartContainer.value.style.left = ''
-              chartContainer.value.style.zIndex = ''
-            }
-            updateChartSize()
-          }, 50)
-        }
-      } catch (error) {
-        console.error('全屏切换失败:', error)
-      }
-    }
 
     // 缩放和平移功能
     const handleZoom = (event) => {
@@ -777,9 +705,18 @@ export default {
     // 主题管理
     const subscriptions = new Map() // topic -> subscription
     const parsedTopicFields = ref(new Map()) // topic -> fields[] 存储解析后的字段
+    const topicFieldsBuffer = ref(new Map()) // topic -> fields[] 临时备份，便于返回时恢复
+    
+    // 判断某topic的字段是否为空或仅包含解析占位
+    const isFieldsParsingOrEmpty = (topicName) => {
+      if (!parsedTopicFields.value.has(topicName)) return true
+      const fields = parsedTopicFields.value.get(topicName) || []
+      if (!Array.isArray(fields) || fields.length === 0) return true
+      return fields.every(f => f?.isParsing === true || String(f?.type || '').toLowerCase() === 'parsing')
+    }
 
     // 动态解析消息结构，寻找可绘制的数值字段
-    const parseMessageStructure = (message, prefix = '', maxDepth = 3, currentDepth = 0) => {
+    const parseMessageStructure = (message, prefix = '', maxDepth = 1, currentDepth = 0) => {
       const fields = []
       
       if (currentDepth >= maxDepth) return fields
@@ -838,6 +775,40 @@ export default {
       }
       
       return fields
+    }
+
+    // 在覆盖解析结果前备份当前字段列表
+    const backupTopicFields = (topicName) => {
+      if (topicFieldsBuffer.value.has(topicName)) return
+      // 优先备份已解析过的字段
+      if (parsedTopicFields.value.has(topicName)) {
+        topicFieldsBuffer.value.set(topicName, parsedTopicFields.value.get(topicName))
+        return
+      }
+      // 没有解析过则尝试基于已知类型获取默认字段
+      const topicInfo = availableTopics.value.find(t => t.value === topicName)
+      if (topicInfo) {
+        const defaults = getTopicFields(topicInfo)
+        topicFieldsBuffer.value.set(topicName, defaults)
+      }
+    }
+
+    // 恢复备份的字段列表
+    const restoreTopicFields = (topicName) => {
+      if (!topicFieldsBuffer.value.has(topicName)) return
+      const buffered = topicFieldsBuffer.value.get(topicName)
+      parsedTopicFields.value.set(topicName, buffered)
+      topicFieldsBuffer.value.delete(topicName)
+    }
+
+    // 确保在展开时有可显示的字段（如无则使用默认字段）
+    const ensureTopicFieldsOnExpand = (topic) => {
+      const topicName = topic.value
+      const existing = parsedTopicFields.value.get(topicName)
+      if (!Array.isArray(existing) || existing.length === 0 || isFieldsParsingOrEmpty(topicName)) {
+        const defaults = getTopicFields(topic)
+        parsedTopicFields.value.set(topicName, defaults)
+      }
     }
 
     // 获取主题字段
@@ -1435,8 +1406,12 @@ export default {
       const index = expandedTopics.value.indexOf(topic.value)
       if (index === -1) {
         expandedTopics.value.push(topic.value)
+        // 展开时确保有内容可显示
+        ensureTopicFieldsOnExpand(topic)
       } else {
         expandedTopics.value.splice(index, 1)
+        // 折叠时尝试恢复之前的字段
+        restoreTopicFields(topic.value)
       }
     }
 
@@ -1519,7 +1494,7 @@ export default {
         const timestamp = Date.now()
 
         // 如果是未知类型且还没有解析过字段，尝试解析消息结构
-        if (!parsedTopicFields.value.has(topicName)) {
+        if (!parsedTopicFields.value.has(topicName) || isFieldsParsingOrEmpty(topicName)) {
           console.log(`[ChartPanel] 尝试解析未知类型topic: ${topicName}`)
           const parsedFields = parseMessageStructure(message)
           
@@ -1529,6 +1504,8 @@ export default {
             
             if (plottableFields.length > 0) {
               console.log(`[ChartPanel] 发现 ${plottableFields.length} 个可绘制字段:`, plottableFields)
+              // 覆盖前进行备份，便于返回恢复
+              backupTopicFields(topicName)
               parsedTopicFields.value.set(topicName, plottableFields)
               
               // 触发UI更新
@@ -1759,13 +1736,7 @@ export default {
 
       let newWidth, newHeight
 
-      if (isFullscreen.value) {
-        // 全屏模式：使用视口尺寸
-        newWidth = window.innerWidth
-        newHeight = window.innerHeight
-        console.log(`[ChartPanel] 全屏模式 - 使用视口尺寸: ${newWidth}x${newHeight}`)
-      } else {
-        // 非全屏模式：使用容器尺寸，但确保容器有正确的尺寸
+      // 使用容器尺寸，但确保容器有正确的尺寸
         const rect = chartContainer.value.getBoundingClientRect()
         const parentRect = chartContainer.value.parentElement?.getBoundingClientRect()
 
@@ -1780,7 +1751,6 @@ export default {
         }
 
         // console.log(`[ChartPanel] 正常模式 - 容器尺寸: ${rect.width}x${rect.height}, 使用尺寸: ${newWidth}x${newHeight}`)
-      }
 
       // 强制最小尺寸
       newWidth = Math.max(newWidth, 400)
@@ -1795,26 +1765,6 @@ export default {
       // console.log(`[ChartPanel] 可用绘图区域: ${newWidth - margin.left - margin.right}x${newHeight - margin.top - margin.bottom}`)
     }
 
-    // 检测全屏状态变化
-    const handleFullscreenChange = () => {
-      const previousState = isFullscreen.value
-
-      // 更新全屏状态
-      isFullscreen.value = !!(
-        document.fullscreenElement ||
-        document.webkitFullscreenElement ||
-        document.mozFullScreenElement ||
-        document.msFullscreenElement
-      )
-      
-      console.log(`[ChartPanel] 全屏状态变化: ${previousState} -> ${isFullscreen.value}`)
-
-      // 立即更新图表尺寸
-      nextTick(() => {
-          updateChartSize()
-        console.log(`[ChartPanel] 全屏状态变化后尺寸: ${chartSize.value.width}x${chartSize.value.height}`)
-      })
-    }
 
     // 加载真实的topic数据
     const loadTopics = async () => {
@@ -2159,10 +2109,6 @@ export default {
       window.addEventListener('orientationchange', handleResize)
       
       // 监听全屏状态变化
-      document.addEventListener('fullscreenchange', handleFullscreenChange)
-      document.addEventListener('webkitfullscreenchange', handleFullscreenChange)
-      document.addEventListener('mozfullscreenchange', handleFullscreenChange)
-      document.addEventListener('MSFullscreenChange', handleFullscreenChange)
 
       // 定期检查容器尺寸，确保响应性（每500ms检查一次）
       sizeCheckInterval = setInterval(() => {
@@ -2232,10 +2178,6 @@ export default {
       window.removeEventListener('orientationchange', handleResize)
       
       // 移除全屏状态监听器
-      document.removeEventListener('fullscreenchange', handleFullscreenChange)
-      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange)
-      document.removeEventListener('mozfullscreenchange', handleFullscreenChange)
-      document.removeEventListener('MSFullscreenChange', handleFullscreenChange)
 
       // 清理ResizeObserver
       if (resizeObserver) {
@@ -2312,7 +2254,6 @@ export default {
       isPaused,
       showTopicSelector,
       showLegendPanel,
-      isFullscreen,
       timeWindow,
 
       // 主题管理
@@ -2349,7 +2290,6 @@ export default {
       clearChart,
       onTimeWindowChange,
       resetZoom,
-      toggleFullscreen,
       handleZoom,
       startPan,
       handlePan,
@@ -2443,7 +2383,10 @@ export default {
   overflow: hidden;
 }
 
-.chart-main.with-sidebar .chart-container {
+/* 更新的侧边栏布局样式 */
+.chart-main.with-left-sidebar .chart-container,
+.chart-main.with-right-sidebar .chart-container,
+.chart-main.with-both-sidebars .chart-container {
   flex: 1;
 }
 
@@ -2462,53 +2405,6 @@ export default {
   height: 100%; /* 使用父容器的100%高度，自适应全屏 */
 }
 
-/* 全屏时的样式 - 使用更具体的选择器 */
-.chart-container:fullscreen,
-.chart-container:-webkit-full-screen,
-.chart-container:-moz-full-screen,
-.chart-container:-ms-fullscreen {
-  margin: 0 !important;
-  border-radius: 0 !important;
-  background: rgba(0, 0, 0, 0.95) !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  position: fixed !important;
-  top: 0 !important;
-  left: 0 !important;
-  z-index: 9999 !important;
-  max-width: none !important;
-  max-height: none !important;
-  overflow: hidden !important;
-}
-
-/* 全屏时的SVG样式 */
-.chart-container:fullscreen .chart-svg,
-.chart-container:-webkit-full-screen .chart-svg,
-.chart-container:-moz-full-screen .chart-svg,
-.chart-container:-ms-fullscreen .chart-svg {
-  width: 100vw !important;
-  height: 100vh !important;
-  max-width: none !important;
-  max-height: none !important;
-}
-
-/* 全屏时的图表面板样式 */
-.chart-container:fullscreen .chart-panel,
-.chart-container:-webkit-full-screen .chart-panel,
-.chart-container:-moz-full-screen .chart-panel,
-.chart-container:-ms-fullscreen .chart-panel {
-  height: 100vh !important;
-  width: 100vw !important;
-}
-
-/* 全屏时的图表主区域样式 */
-.chart-container:fullscreen .chart-main,
-.chart-container:-webkit-full-screen .chart-main,
-.chart-container:-moz-full-screen .chart-main,
-.chart-container:-ms-fullscreen .chart-main {
-  width: 100vw !important;
-  height: calc(100vh - 45px) !important; /* 减去控制栏高度 */
-}
 
 /* 侧边面板样式 */
 .topic-selector-panel,
@@ -2546,6 +2442,14 @@ export default {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.panel-tip {
+  font-size: 12px;
+  color: #10b981;
+  margin-left: 8px;
+  opacity: 0.8;
+  flex-shrink: 0;
 }
 
 .panel-content {
@@ -2707,6 +2611,31 @@ export default {
   background: rgba(148, 163, 184, 0.2);
   padding: 2px 6px;
   border-radius: 4px;
+}
+
+.topic-fields-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(30, 41, 59, 0.6);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  margin-bottom: 8px;
+}
+
+.back-button {
+  color: #94a3b8 !important;
+  font-size: 12px;
+}
+
+.back-button:hover {
+  color: #3b82f6 !important;
+}
+
+.fields-title {
+  font-size: 12px;
+  color: #e2e8f0;
+  font-weight: 500;
 }
 
 .topic-fields {
@@ -3102,9 +3031,44 @@ export default {
   width: 220px;
 }
 
+.chart-panel.compact .chart-main.with-both-sidebars .topic-selector-panel,
+.chart-panel.compact .chart-main.with-both-sidebars .legend-panel {
+  width: 200px;
+}
+
+/* 双侧边栏布局支持 */
+.chart-main.with-both-sidebars {
+  display: flex;
+}
+
+.chart-main.with-both-sidebars .topic-selector-panel {
+  order: 1;
+  width: 260px; /* 稍微减小宽度以适应双侧边栏 */
+}
+
+.chart-main.with-both-sidebars .chart-container {
+  order: 2;
+  flex: 1;
+}
+
+.chart-main.with-both-sidebars .legend-panel {
+  order: 3;
+  width: 260px; /* 稍微减小宽度以适应双侧边栏 */
+}
+
 /* 响应式设计 */
+@media (max-width: 1200px) {
+  /* 在中等屏幕上，双侧边栏时调整宽度 */
+  .chart-main.with-both-sidebars .topic-selector-panel,
+  .chart-main.with-both-sidebars .legend-panel {
+    width: 220px;
+  }
+}
+
 @media (max-width: 768px) {
-  .chart-main.with-sidebar {
+  .chart-main.with-left-sidebar,
+  .chart-main.with-right-sidebar,
+  .chart-main.with-both-sidebars {
     flex-direction: column;
   }
 
@@ -3112,6 +3076,7 @@ export default {
   .legend-panel {
     width: 100%;
     height: 200px;
+    order: initial;
   }
 
   .controls-center {
