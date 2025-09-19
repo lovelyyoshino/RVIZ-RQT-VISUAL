@@ -740,13 +740,26 @@ export default {
         }
       }
 
-      // 普通字段路径
+      // 普通字段路径 - 处理ROS消息的下划线前缀
       const parts = fieldPath.split('.')
       let value = message
 
       for (const part of parts) {
-        if (value && typeof value === 'object' && part in value) {
-          value = value[part]
+        if (value && typeof value === 'object') {
+          // 首先尝试直接访问字段
+          if (part in value) {
+            value = value[part]
+          } else {
+            // 如果直接访问失败，尝试下划线前缀
+            const underscorePart = `_${part}`
+            if (underscorePart in value) {
+              value = value[underscorePart]
+            } else {
+              // 如果都失败，返回null
+              console.warn(`[ChartPanel] 字段 ${part} 不存在，尝试了 ${part} 和 ${underscorePart}`)
+              return null
+            }
+          }
         } else {
           return null
         }
