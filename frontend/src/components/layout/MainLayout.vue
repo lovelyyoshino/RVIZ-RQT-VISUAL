@@ -72,6 +72,15 @@
         <!-- 右侧 ROS 拓扑图区域 -->
         <div class="topology-section" :style="{ width: `${100 - sceneWidth}%` }">
           <div class="topology-main-panel" :class="{ 'fullscreen': fullscreenPanels.topology }">
+            <!-- 全屏模式下的退出按钮 -->
+            <div v-if="fullscreenPanels.topology" class="fullscreen-exit-btn">
+              <el-button size="large" @click="toggleTopologyFullscreen">
+                <el-icon><CloseBold /></el-icon>
+                退出全屏
+              </el-button>
+              <div class="esc-hint">按 ESC 键退出</div>
+            </div>
+
             <div class="topology-header">
               <h3>ROS 通信拓扑图</h3>
               <div class="topology-controls">
@@ -101,6 +110,15 @@
             <div class="control-panels-container">
               <!-- GPS/位置信息面板 -->
               <div class="mini-panel gps-mini-panel" :class="{ 'fullscreen': fullscreenPanels.gps }">
+                <!-- 全屏模式下的退出按钮 -->
+                <div v-if="fullscreenPanels.gps" class="fullscreen-exit-btn">
+                  <el-button size="large" @click="expandPanel('gps')">
+                    <el-icon><CloseBold /></el-icon>
+                    退出全屏
+                  </el-button>
+                  <div class="esc-hint">按 ESC 键退出</div>
+                </div>
+
                 <div class="mini-panel-header">
                   <h5>位置信息</h5>
                   <el-button size="small" text @click="expandPanel('gps')">
@@ -117,6 +135,15 @@
 
               <!-- 3D控制器面板 -->
               <div class="mini-panel controller-mini-panel" :class="{ 'fullscreen': fullscreenPanels.controller }">
+                <!-- 全屏模式下的退出按钮 -->
+                <div v-if="fullscreenPanels.controller" class="fullscreen-exit-btn">
+                  <el-button size="large" @click="expandPanel('controller')">
+                    <el-icon><CloseBold /></el-icon>
+                    退出全屏
+                  </el-button>
+                  <div class="esc-hint">按 ESC 键退出</div>
+                </div>
+
                 <div class="mini-panel-header">
                   <h5>3D控制</h5>
                   <el-button size="small" text @click="expandPanel('controller')">
@@ -146,6 +173,15 @@
 
               <!-- 状态指示面板 -->
               <div class="mini-panel status-mini-panel" :class="{ 'fullscreen': fullscreenPanels.status }">
+                <!-- 全屏模式下的退出按钮 -->
+                <div v-if="fullscreenPanels.status" class="fullscreen-exit-btn">
+                  <el-button size="large" @click="expandPanel('status')">
+                    <el-icon><CloseBold /></el-icon>
+                    退出全屏
+                  </el-button>
+                  <div class="esc-hint">按 ESC 键退出</div>
+                </div>
+
                 <div class="mini-panel-header">
                   <h5>状态</h5>
                   <el-button size="small" text @click="expandPanel('status')">
@@ -162,6 +198,15 @@
 
               <!-- 数据图表面板 -->
               <div class="mini-panel chart-mini-panel" :class="{ 'fullscreen': fullscreenPanels.chart }">
+                <!-- 全屏模式下的退出按钮 -->
+                <div v-if="fullscreenPanels.chart" class="fullscreen-exit-btn">
+                  <el-button size="large" @click="expandPanel('chart')">
+                    <el-icon><CloseBold /></el-icon>
+                    退出全屏
+                  </el-button>
+                  <div class="esc-hint">按 ESC 键退出</div>
+                </div>
+
                 <div class="mini-panel-header">
                   <h5>数据图表</h5>
                   <el-button size="small" text @click="expandPanel('chart')">
