@@ -159,4 +159,4 @@ ros-web-viz/
 ---
 
 ## 许可
-MIT License（详见仓库 LICENSE）。
+BSD 3-Clause License（详见仓库 LICENSE）。
